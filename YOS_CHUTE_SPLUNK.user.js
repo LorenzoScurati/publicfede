@@ -22,7 +22,7 @@
         "TV1", "ILJ", "MM1 DOM", "MM1 INT", "ICM", "BRG", "RNV",
         "ISV", "OS3", "AOT", "SKG GRE",
         "IPO", "BA5", "BZQ", "AN6", "ATHC", "DZ5", "RMZ", "PD2",
-        "IBU", "DFT", "BO2"
+        "IBU", "DFT", "BO2", "TEST"
     ];
 
     // UTILS & SANITIZER
