@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V1.3
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V1.4
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  View Pieces Auto-Click, Badge Colli Top/Bottom, Single Check Magenta.
+// @version      1.4
+// @description  View Pieces solo su Singolo, Singolo solo post-avvio, Posizione Badge Colli fixata.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -49,16 +49,16 @@
         .yos-zone-400 { top: 18% !important; }
         .yos-zone-300 { top: 82% !important; }
 
-        /* NUOVO: Badge per i Colli (Piece Count) */
+        /* NUOVO: Badge per i Colli posizionato correttamente DENTRO il box */
         .yos-piece-count-badge {
-            position: absolute; left: 50%; transform: translateX(-50%);
+            position: absolute; left: 50%; 
             font-size: 11px; font-weight: bold; color: #0df;
             background-color: rgba(0, 0, 0, 0.85);
             padding: 1px 4px; border-radius: 3px; z-index: 98; pointer-events: none;
             white-space: nowrap; border: 1px solid #0df; box-shadow: 0 0 5px rgba(0,221,255,0.5);
         }
-        .yos-pc-300 { bottom: 130%; } /* Sopra la spunta per la 300 */
-        .yos-pc-400 { top: 130%; }    /* Sotto la spunta per la 400 */
+        .yos-pc-400 { top: 38%; transform: translateX(-50%); } /* Sotto la spunta (che sta a 18%) */
+        .yos-pc-300 { top: 62%; transform: translate(-50%, -100%); } /* Sopra la spunta (che sta a 82%) */
 
         /* Plancia CONS Maintenance */
         #tnt-cons-dashboard {
@@ -166,6 +166,7 @@
                     btn.innerHTML = '⏳ Riavvio in corso...';
                     btn.style.background = '#ffc107'; 
                     GM_setValue('cons_active_trailers', '{}');
+                    GM_setValue('cons_initial_scan_done', false); // Resetta il flag
                     deepClearFilters();
                     setTimeout(() => location.reload(), 500);
                     return; 
@@ -216,17 +217,19 @@
     }
 
     // ==========================================
-    // LOGICA 10-SECONDI SETUP (MIGLIORATA)
+    // LOGICA 10-SECONDI SETUP 
     // ==========================================
     function runSetupSequence() {
         if (hasInitializedFilters) return;
         const resetBtn = document.querySelector('button[title="Reset filter"]');
-        if (!resetBtn) return; // Aspetta che la UI esista prima di contare
+        if (!resetBtn) return; 
 
         hasInitializedFilters = true; 
         const targetHours = GM_getValue('cons_target_hours', '24');
         const targetUnit = GM_getValue('cons_target_unittype', 'NONE');
+        
         GM_setValue('cons_scan_state', 'RUNNING');
+        GM_setValue('cons_initial_scan_done', false);
         
         setTimeout(deepClearFilters, 500);
 
@@ -272,6 +275,7 @@
             if (GM_getValue('cons_hard_reset_command', false)) {
                 GM_setValue('cons_hard_reset_command', false);
                 GM_setValue('cons_active_trailers', '{}');
+                GM_setValue('cons_initial_scan_done', false);
                 deepClearFilters();
                 setTimeout(() => location.reload(), 500);
                 return;
@@ -286,6 +290,7 @@
                 else if (dbCooldownSeconds <= 0 && completedSweeps >= 2) {
                     isAutoScanActive = false; 
                     GM_setValue('cons_scan_state', 'COMPLETED');
+                    GM_setValue('cons_initial_scan_done', true); // SBLOCCA IL SINGLE CHECK
                     
                     const btn = document.getElementById('tnt-cons-autoscan-btn');
                     if (btn) {
@@ -304,6 +309,9 @@
     // ESECUZIONE SINGOLO CHECK (PRIORITÀ)
     // ==========================================
     function processSingleCheckQueue() {
+        // NON FARLO se non ha finito prima il giro principale
+        if (!GM_getValue('cons_initial_scan_done', false)) return false; 
+        
         if (isProcessingCommand) return true; 
         let queueStr = GM_getValue('cons_single_check_queue', '[]');
         let queue = [];
@@ -314,7 +322,7 @@
         let targetId = queue.shift();
         GM_setValue('cons_single_check_queue', JSON.stringify(queue));
         
-        console.log(`[YOS-SYNC] 🔍 SINGLE CHECK avviato per Trailer: ${targetId}`);
+        console.log(`[YOS-SYNC] 🔍 SINGLE CHECK avviato per Trailer (Chiuso): ${targetId}`);
         isProcessingCommand = true;
         
         // Imposta lo stato speciale per far apparire il badge Magenta su YOS
@@ -336,7 +344,7 @@
                 const refreshBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
                 forceAggressiveClick(refreshBtn);
 
-                // Aspetta che i dati carichino, preme i pulsanti view e li legge
+                // Solo qui si cliccano i pulsanti View
                 setTimeout(() => {
                     const viewBtns = document.querySelectorAll('button[title="Click to view piece count"]');
                     if (viewBtns.length > 0) {
@@ -361,7 +369,7 @@
                             const assetIdNode = row.querySelector('td.mat-column-assetId');
                             const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
-                            // Lettura Colli Diretta 
+                            // Lettura Colli Diretta (apparso dopo il click View)
                             let pieceCount = 0;
                             const pieceSpan = row.querySelector('.piece-count');
                             if (pieceSpan) {
@@ -390,7 +398,7 @@
                                 }
                             }, 1000);
                         }, 500);
-                    }, 1500); // Wait after clicking "view"
+                    }, 1500); 
                 }, 2000);
             }, 500);
         }, 500);
@@ -444,7 +452,7 @@
     }
 
     // ==========================================
-    // LOGICA CONS MAINTENANCE (Scanner)
+    // LOGICA CONS MAINTENANCE (Scanner Principale)
     // ==========================================
     function scanConsMaintenance() {
         if (!document.title.includes('CONS Maintenance')) return;
@@ -461,14 +469,8 @@
         if (loader && loader.offsetHeight > 0) return;
         if (Date.now() - lastClickTime < 2500) return;
 
-        // Auto-click "View piece count" prima di analizzare la pagina
-        const viewBtns = document.querySelectorAll('button[title="Click to view piece count"]');
-        if (viewBtns.length > 0) {
-            viewBtns.forEach(btn => forceAggressiveClick(btn));
-            lastClickTime = Date.now(); // Mette in pausa per far aggiornare i dom colli
-            return; 
-        }
-
+        // RIMOSSO IL CLICK AUTO DEI "VIEW" DURANTE LO SWEEP NORMALE
+        
         const prevBtn = document.querySelector('button[aria-label="Previous page"]');
         const nextBtn = document.querySelector('button[aria-label="Next page"]');
         if (!prevBtn || !nextBtn) return;
@@ -495,7 +497,7 @@
                 const assetIdNode = row.querySelector('td.mat-column-assetId');
                 const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
-                // Lettura intelligente Piece Count post-click
+                // Lettura intelligente Piece Count se è già visibile, altrimenti 0
                 let pieceCount = 0;
                 const pieceSpan = row.querySelector('.piece-count');
                 if (pieceSpan) {
@@ -614,7 +616,6 @@
                 statusBadge.style.backgroundColor = '#6c757d'; textEl.innerText = 'CONS in attesa...';
             } 
             else if (scanState === 'SINGLE_CHECK') {
-                // COLORE MAGENTA QUANDO FA IL CHECK SINGOLO
                 statusBadge.style.backgroundColor = '#9c27b0'; statusBadge.style.color = 'white'; 
                 textEl.innerText = `🟣 SINGLE CHECK IN CORSO...`;
             }
@@ -678,7 +679,6 @@
                 container.appendChild(customInfo);
             }
 
-            // Aggiungo anche il badge per i colli (se non esiste)
             let pieceBadge = container.querySelector('.yos-piece-count-badge');
             if (!pieceBadge) {
                 pieceBadge = document.createElement('div');
@@ -731,7 +731,6 @@
                     const trailers = records.filter(r => r.unitType === 'TRAILER');
                     const bulks = records.filter(r => r.unitType === 'OTHER' || r.unitType === 'BAG');
 
-                    // Calcolo colli totali
                     totalPieces = records.reduce((acc, r) => acc + (r.pieceCount || 0), 0);
 
                     if (trailers.length > 1) {
@@ -749,7 +748,6 @@
             if (customInfo.style.color !== targetColor) customInfo.style.color = targetColor;
             if (customInfo.style.border !== targetBorder) customInfo.style.border = targetBorder;
 
-            // Mostro/Nascondo Badge Colli
             if (totalPieces > 0) {
                 if (pieceBadge.innerText !== totalPieces + " pz") pieceBadge.innerText = totalPieces + " pz";
                 if (pieceBadge.style.display !== "block") pieceBadge.style.display = "block";
