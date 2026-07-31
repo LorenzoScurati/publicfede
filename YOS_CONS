@@ -6,8 +6,8 @@
 // @author       Lorenzo Scurati (Fixed)
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
-// @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CONS
-// @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CONS
+// @updateURL    https://raw.githubusercontent.com/LorenzoScurati/publicfede/refs/heads/main/YOS_CONS
+// @downloadURL  https://raw.githubusercontent.com/LorenzoScurati/publicfede/refs/heads/main/YOS_CONS
 // @grant        GM_setValue
 // @grant        GM_getValue
 // ==/UserScript==
