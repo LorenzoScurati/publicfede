@@ -1,13 +1,14 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400)
+// @name         YOS & CONS Sync Overlay (Zone 300/400) TEST
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Andata=1 Giro, Ritorno=2°. Minimo 2 Min & 2 Giri. Click Reset Filter a fine ciclo per sblocco UI.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
-// @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CONS.txt
-// @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CONS.txt
+// @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CONS.user.js
+// @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CONS.user.js
+
 // @grant        GM_setValue
 // @grant        GM_getValue
 // ==/UserScript==
