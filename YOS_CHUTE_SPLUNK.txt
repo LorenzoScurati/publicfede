@@ -5,8 +5,8 @@
 // @description  Sincronizzazione tra Splunk Chute Scans e Plancia YOS (Ricerca Flessibile "Lenient"). Fix conflitti YOS Tool (ID tnt-).
 // @author       Lorenzo Scurati (Fixed)
 // @match        *://*/*
-// @updateURL    https://raw.githubusercontent.com/LorenzoScurati/publicfede/main/YOS_CHUTE_SPLUNK.txt
-// @downloadURL  https://raw.githubusercontent.com/LorenzoScurati/publicfede/main/YOS_CHUTE_SPLUNK.txt
+// @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CHUTE_SPLUNK.txt
+// @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_CHUTE_SPLUNK.txt
 // @grant        GM_setValue
 // @grant        GM_getValue
 // ==/UserScript==
