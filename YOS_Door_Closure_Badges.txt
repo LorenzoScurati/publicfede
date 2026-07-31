@@ -1,0 +1,629 @@
+// ==UserScript==
+// @name         YOS Door Closure Badges-TEST
+// @namespace    http://tampermonkey.net/
+// @version      1.3
+// @description  Unione: Cache Live, UI compatta in basso, Auto-Time (Ieri-Domani) e calcolo accurato Same-Day Fix. Reso invisibile all'observer di YOS Tool.
+// @author       Lorenzo Scurati
+// @match        https://yos.apps.tnt.com/hub-overview*
+// @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.txt
+// @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.txt
+
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const TIME_WINDOW_MINUTES = 180;
+    let globalOutboundCache = [];
+    let lastUpdateStr = "In attesa dati...";
+    let timeFilterApplied = false;
+    let isVisuallyHidden = false;
+
+    // --- REGOLE CHIUSURA (Suddivise e commentate) ---
+    const CLOSURE_RULES = {
+        // 1. STANDARD (-20 MINUTI)
+        'BO2': 20, 'AN6': 20, 'FC5': 20, 'PD2': 20, 'RMZ': 20, 'NT3': 20, 'FIA': 20, 'QZR': 20, 'NC3': 20, 'ROM': 20,
+        'PSA': 20, 'BA5': 20, 'TV1': 20, 'BO1': 20, 'QVA': 20, 'TO1': 20, 'ZD1': 20, 'IBU': 20, 'ICM': 20, 'IIM': 20,
+        'VE1': 20, 'IBD': 20, 'QPA': 20, 'VNZ': 20, 'PMF': 20, 'IPO': 20, 'QPZ': 20, 'CUF': 20, 'AOT': 20, 'OSO': 20,
+        'MIL': 20, 'RNV': 20, 'ILJ': 20, 'ISV': 20, 'BEA': 20, 'REM': 20, 'FCO': 20, 'MDA': 20, 'VRN': 20, 'MM1': 20,
+        'BRG': 20, 'VBS': 20, 'GOA': 20, 'MZ1': 20, 'OS3': 20, 'QAL': 20,
+
+        // 2. ANTICIPO 40 MINUTI
+        'ATH': 40, 'MRS': 40, 'XPI': 40, 'LYS': 40, 'MXP': 40, '06A': 40,
+
+        // 3. ANTICIPO 1 ORA (60 MINUTI)
+        'SKG': 60, 'MV9': 60, 'XWT': 60, 'KR9': 60, 'DNG': 60, 'HNJ': 60, 'QAR': 60, 'MAD': 60, 'WA1': 60, 'BCN': 60,
+        'BZQ': 60, 'DFT': 60, 'Z8C': 20, '93A': 60,
+
+        // 4. ANTICIPO 2 ORE (120 MINUTI)
+        'ZRH': 120, 'DZ5': 120, 'LUG': 120, 'KG4': 120
+    };
+
+    function getClosureOffsetMinutes(dest) {
+        if (!dest) return 20;
+        if (CLOSURE_RULES[dest] !== undefined) return CLOSURE_RULES[dest];
+        for (const key in CLOSURE_RULES) {
+            if (dest.startsWith(key)) return CLOSURE_RULES[key];
+        }
+        return 20;
+    }
+
+    // --- STILI CSS UNIFICATI ---
+    const style = document.createElement('style');
+    style.innerHTML = `
+        /* Trasparenza attiva che mantiene il DOM vivo */
+        body.yos-hide-panel app-responsive-task-panel { opacity: 0 !important; pointer-events: none !important; transform: scale(0.01) !important; transform-origin: top left !important; position: fixed !important; z-index: -9999 !important; }
+
+        /* Container UI in Basso a Sinistra - NOTA: Usiamo prefisso tnt-yos- per eludere il MutationObserver dell'altro script */
+        #tnt-yos-ui-container { position: fixed; bottom: 20px; left: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; }
+
+        .yos-btn { color: #fff; border: none; padding: 10px 16px; border-radius: 6px; font-weight: bold; font-size: 13px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: background-color 0.2s; text-align: left; }
+        #tnt-yos-export-btn { background-color: #007bff; }
+        #tnt-yos-export-btn:hover { background-color: #0056b3; }
+        #tnt-yos-toggle-btn { background-color: #6c757d; }
+        #tnt-yos-toggle-btn:hover { background-color: #5a6268; }
+
+        #tnt-yos-status-indicator { background: #18191a; color: #28a745; border: 1px solid #28a745; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: bold; font-family: sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 8px; pointer-events: none; }
+        #tnt-yos-status-indicator .dot { width: 10px; height: 10px; background-color: #28a745; border-radius: 50%; box-shadow: 0 0 8px #28a745; }
+
+        /* Badge Baie */
+        .yos-door-badge { position: absolute !important; left: 50% !important; z-index: 99999 !important; padding: 2px 4px !important; border-radius: 3px !important; font-size: 10px !important; font-weight: 700 !important; font-family: monospace; color: #ffffff !important; box-shadow: 0px 2px 4px rgba(0,0,0,0.6) !important; text-shadow: 1px 1px 1px rgba(0,0,0,0.9) !important; text-align: center !important; white-space: nowrap !important; pointer-events: none !important; border: 1px solid rgba(255,255,255,0.3) !important; line-height: 1.0 !important; }
+        .yos-badge-top { top: -20px !important; transform: translateX(-50%) !important; }
+        .yos-badge-bottom { bottom: -20px !important; transform: translateX(-50%) !important; }
+
+        .yos-bg-nextday { background-color: #5a6268 !important; color: #ffffff !important; }
+        .yos-bg-normal  { background-color: #17a2b8 !important; color: #ffffff !important; }
+        .yos-bg-warning { background-color: #ffc107 !important; color: #000000 !important; border-color: rgba(0,0,0,0.3) !important; text-shadow: none !important;}
+        .yos-bg-urgent  { background-color: #fd7e14 !important; color: #ffffff !important; }
+        .yos-bg-expired { background-color: #dc3545 !important; color: #ffffff !important; }
+        .yos-bg-closed  { background-color: #28a745 !important; color: #ffffff !important; }
+
+        /* Modale Tabelle */
+        .yos-modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.75); z-index: 100000; display: flex; align-items: center; justify-content: center; font-family: sans-serif; }
+        .yos-modal-content { background: #272828; color: #e3e3e3; width: 90%; max-width: 1250px; max-height: 85vh; border-radius: 8px; border: 1px solid #444; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
+        .yos-modal-header { padding: 15px 20px; background: #333435; border-bottom: 1px solid #444; display: flex; justify-content: space-between; align-items: center; }
+        .yos-modal-header h3 { margin: 0; font-size: 16px; color: #fff; }
+        .yos-modal-tabs { display: flex; gap: 10px; padding: 10px 20px; background: #1e1e1e; border-bottom: 1px solid #444; align-items: center; }
+        .yos-tab-btn { background: #3a3b3c; color: #ccc; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        .yos-tab-btn.active { background: #007bff; color: #fff; font-weight: bold; }
+        .yos-modal-body { padding: 15px; overflow-y: auto; flex: 1; }
+        .yos-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .yos-table th, .yos-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #3d3e3f; }
+        .yos-table th { background: #1f2020; color: #aaa; position: sticky; top: 0; z-index: 2; }
+        .yos-section-divider { background-color: #0d47a1 !important; color: #ffffff !important; font-weight: bold; font-size: 13px; padding: 8px 12px !important; }
+        .yos-row-urgent { background-color: rgba(255, 193, 7, 0.22) !important; color: #ffda6a; }
+        .yos-row-imminent { background-color: rgba(255, 152, 0, 0.25) !important; color: #ffb74d !important; }
+        .yos-row-expired { background-color: rgba(244, 67, 54, 0.2) !important; color: #ef9a9a !important; }
+        .yos-row-waiting-window { background-color: rgba(255, 235, 59, 0.08) !important; color: #fff176; }
+        .yos-row-managed { background-color: rgba(40, 167, 69, 0.22) !important; color: #85e39d !important; border-left: 4px solid #28a745; }
+        .yos-modal-footer { padding: 12px 20px; background: #333435; border-top: 1px solid #444; display: flex; justify-content: space-between; align-items: center; }
+        .yos-btn-close { background: #dc3545; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+        .yos-btn-csv { background: #28a745; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
+        .yos-btn-img { background: #17a2b8; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
+    `;
+    document.head.appendChild(style);
+
+    // --- SETUP INTERFACCIA ---
+    function initUI() {
+        if (document.getElementById('tnt-yos-ui-container')) return;
+
+        const container = document.createElement('div');
+        container.id = 'tnt-yos-ui-container';
+
+        const indicator = document.createElement('div');
+        indicator.id = 'tnt-yos-status-indicator';
+        indicator.innerHTML = `<span class="dot" id="tnt-yos-dot"></span> <span id="tnt-yos-status-text">Attesa Outbound...</span>`;
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.id = 'tnt-yos-toggle-btn';
+        toggleBtn.className = 'yos-btn';
+        toggleBtn.innerHTML = '👁️ Nascondi Pannello';
+        toggleBtn.onclick = () => {
+            isVisuallyHidden = !isVisuallyHidden;
+            if (isVisuallyHidden) {
+                document.body.classList.add('yos-hide-panel');
+                toggleBtn.innerHTML = '👁️ Mostra Pannello';
+                toggleBtn.style.backgroundColor = '#17a2b8';
+            } else {
+                document.body.classList.remove('yos-hide-panel');
+                toggleBtn.innerHTML = '👁️ Nascondi Pannello';
+                toggleBtn.style.backgroundColor = '#6c757d';
+            }
+        };
+
+        const exportBtn = document.createElement('button');
+        exportBtn.id = 'tnt-yos-export-btn';
+        exportBtn.className = 'yos-btn';
+        exportBtn.innerHTML = '📊 Esporta Outbound';
+        exportBtn.onclick = buildAndShowModal;
+
+        container.appendChild(indicator);
+        container.appendChild(toggleBtn);
+        container.appendChild(exportBtn);
+        document.body.appendChild(container);
+    }
+
+    // --- AGGIORNAMENTO STATO ---
+    function updateStatusUI(isPanelOpen) {
+        const statusText = document.getElementById('tnt-yos-status-text');
+        const statusDot = document.getElementById('tnt-yos-dot');
+        const indicator = document.getElementById('tnt-yos-status-indicator');
+        if (!statusText) return;
+
+        if (isPanelOpen) {
+            statusText.innerText = `🟢 IN LETTURA (${globalOutboundCache.length} mezzi)`;
+            statusDot.style.backgroundColor = '#28a745';
+            statusDot.style.boxShadow = '0 0 8px #28a745';
+            indicator.style.borderColor = '#28a745';
+        } else {
+            statusText.innerText = `🟠 CACHE FERMA (${globalOutboundCache.length} mezzi)`;
+            statusDot.style.backgroundColor = '#ff9800';
+            statusDot.style.boxShadow = '0 0 8px #ff9800';
+            indicator.style.borderColor = '#ff9800';
+        }
+    }
+
+    // --- AUTOMAZIONE DATA E ORA SU 3 GIORNI (Ieri -> Domani) ---
+    function fixDateTimeFilter() {
+        const isPanelOpen = document.querySelector('app-outbound') !== null;
+
+        if (!isPanelOpen) {
+            timeFilterApplied = false;
+            return;
+        }
+        if (timeFilterApplied) return;
+
+        const calIcon = document.querySelector('.calendar-icon-image[src*="duration.svg"]');
+        const applyBtn = Array.from(document.querySelectorAll('*')).find(el => el.textContent && el.textContent.trim() === 'APPLY DURATION' && el.children.length === 0);
+
+        if (!applyBtn && calIcon) {
+            calIcon.click();
+            return;
+        }
+
+        if (applyBtn) {
+            const popup = applyBtn.closest('.cdk-overlay-pane, .mat-dialog-container') || document.body;
+            const textInputs = Array.from(popup.querySelectorAll('input[type="text"]'));
+
+            const startTimeInput = popup.querySelector('input.start-time');
+            const endTimeInput = popup.querySelector('input.end-time');
+
+            let startDateInput = null;
+            let endDateInput = null;
+
+            for (let i = 0; i < textInputs.length; i++) {
+                if (textInputs[i] === startTimeInput && i > 0) startDateInput = textInputs[i - 1];
+                if (textInputs[i] === endTimeInput && i > 0) endDateInput = textInputs[i - 1];
+            }
+
+            const now = new Date();
+            const dateIeri = new Date(now); dateIeri.setDate(now.getDate() - 1);
+            const dateDomani = new Date(now); dateDomani.setDate(now.getDate() + 1);
+
+            const formatD = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+            const strIeri = formatD(dateIeri);
+            const strDomani = formatD(dateDomani);
+
+            function setAngularVal(el, val) {
+                if (el && el.value !== val) {
+                    el.value = val;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('blur', { bubbles: true }));
+                }
+            }
+
+            setAngularVal(startDateInput, strIeri);
+            setAngularVal(startTimeInput, '00:00');
+
+            setAngularVal(endDateInput, strDomani);
+            setAngularVal(endTimeInput, '23:59');
+
+            setTimeout(() => {
+                applyBtn.click();
+                timeFilterApplied = true;
+            }, 300);
+        }
+    }
+
+    // --- FUNZIONE DI CALCOLO DINAMICA (Dal Dynamic Same-Day Fix) ---
+    function getClosureDetails(dateStr, depTimeStr, offsetMinutes) {
+        try {
+            const [depH, depM] = depTimeStr.split(':').map(Number);
+            if (isNaN(depH) || isNaN(depM)) return null;
+
+            const now = new Date();
+            let depDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), depH, depM, 0, 0);
+            let isDifferentDay = false;
+
+            if (dateStr && dateStr.includes('-')) {
+                const [day, month] = dateStr.split('-').map(Number);
+                depDate.setMonth(month - 1, day);
+
+                // Check dinamico giorno successivo
+                if (day !== now.getDate() || (month - 1) !== now.getMonth()) {
+                    isDifferentDay = true;
+                }
+            } else {
+                if ((depDate.getTime() - now.getTime()) < -12 * 3600 * 1000) {
+                    depDate.setDate(depDate.getDate() + 1);
+                    isDifferentDay = true;
+                }
+            }
+
+            const closureDate = new Date(depDate.getTime() - (offsetMinutes * 60 * 1000));
+            const diffMinutes = Math.round((closureDate.getTime() - now.getTime()) / 60000);
+
+            const closureH = String(closureDate.getHours()).padStart(2, '0');
+            const closureM = String(closureDate.getMinutes()).padStart(2, '0');
+
+            return { closureTimeStr: `${closureH}:${closureM}`, diffMinutes, isDifferentDay, minutesLeft: Math.round((depDate.getTime() - now.getTime()) / 60000) };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function formatRemainingTime(minToClosure, isManaged) {
+        if (isManaged) return 'CHIUSO';
+        if (minToClosure < 0) return `${minToClosure} min (Scaduto)`;
+        if (minToClosure >= 60) {
+            const h = Math.floor(minToClosure / 60);
+            const m = minToClosure % 60;
+            return `${minToClosure} min (${h}h ${m}m)`;
+        }
+        return `${minToClosure} min`;
+    }
+
+    // --- LETTURA E AGGIORNAMENTO CACHE ---
+    function updateCache() {
+        const panel = document.querySelector('app-outbound');
+        updateStatusUI(panel !== null);
+
+        if (panel) {
+            const items = [];
+            const now = new Date();
+            const scheduledElements = document.querySelectorAll('outbound-scheduled, [id^="scheduled-tranport-unit"]');
+
+            scheduledElements.forEach(el => {
+                const text = el.innerText || '';
+                const timeMatch = text.match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/);
+
+                if (timeMatch) {
+                    const giorno = timeMatch[1];
+                    const oraPartenza = timeMatch[2];
+                    const bayMatch = text.match(/\b(3\d\d|4\d\d)\b/);
+                    const isParking = /\bP\d{3}\b/i.test(text);
+
+                    if (bayMatch && !isParking) {
+                        const bay = bayMatch[0];
+                        const bayNum = parseInt(bay, 10);
+                        const zone = bay.startsWith('3') ? '300' : '400';
+
+                        let dest = '-';
+                        const parts = text.split(/\s+|\t+/).filter(Boolean);
+                        for (let p of parts) {
+                            p = p.trim();
+                            if (/^[A-Z0-9]{2,6}(\+[A-Z0-9]+)?$/.test(p) && p !== bay && /[A-Z]/.test(p) && !['OUTBOUND', 'SCHEDULED', 'ALLOCATED', 'LOCATION'].includes(p)) {
+                                dest = p;
+                                break;
+                            }
+                        }
+
+                        const isBlueManaged = el.querySelector('.highlight-task') !== null || el.classList.contains('highlight-task');
+                        const closureOffset = getClosureOffsetMinutes(dest);
+
+                        // Uso della logica avanzata (Dynamic Fix)
+                        const closureInfo = getClosureDetails(giorno, oraPartenza, closureOffset);
+
+                        let closureTimeStr = '-';
+                        let minutesToClosure = 999;
+                        let isDifferentDay = false;
+                        let isWithin180Min = false;
+
+                        if (closureInfo) {
+                            closureTimeStr = closureInfo.closureTimeStr;
+                            minutesToClosure = closureInfo.diffMinutes;
+                            isDifferentDay = closureInfo.isDifferentDay;
+                            isWithin180Min = closureInfo.minutesLeft >= 0 && closureInfo.minutesLeft <= TIME_WINDOW_MINUTES;
+                        }
+
+                        const isUrgent = !isBlueManaged && minutesToClosure <= 10 && minutesToClosure >= 0;
+                        const isImminent = !isBlueManaged && minutesToClosure > 10 && minutesToClosure <= 20;
+                        const isExpired = !isBlueManaged && minutesToClosure < 0;
+
+                        items.push({
+                            giorno, oraPartenza, dest, bay, bayNum, zone,
+                            minutesToClosure, closureTimeStr, closureOffset,
+                            isManaged: isBlueManaged, isUrgent, isImminent, isExpired, isWithin180Min, isDifferentDay
+                        });
+                    }
+                }
+            });
+
+            // Elimina doppioni dalla scansione
+            const uniqueItems = [];
+            const map = new Map();
+            for (const item of items) {
+                const key = `${item.giorno}-${item.oraPartenza}-${item.bay}`;
+                if (!map.has(key)) {
+                    map.set(key, true);
+                    uniqueItems.push(item);
+                }
+            }
+
+            globalOutboundCache = uniqueItems;
+            lastUpdateStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+        }
+    }
+
+    // --- DISEGNO BADGE (Usa la cache e la logica unificata) ---
+    function processBadges() {
+        const scheduleMap = {};
+        globalOutboundCache.forEach(d => scheduleMap[d.bay] = d);
+
+        const doorContainers = document.querySelectorAll('.trailer_unit.door, [id^="unit_"]');
+
+        doorContainers.forEach(container => {
+            const doorNumEl = container.querySelector('.door_number, [id*="container_"][id*="_text"]');
+            if (!doorNumEl) return;
+
+            const bayText = doorNumEl.innerText.trim();
+            const bayMatch = bayText.match(/\b(3\d\d|4\d\d|5\d\d|6\d\d)\b/);
+            if (!bayMatch) return;
+
+            const bayNum = bayMatch[0];
+
+            if (scheduleMap[bayNum]) {
+                const data = scheduleMap[bayNum];
+                let colorClass = 'yos-bg-normal';
+
+                // Logica priorità colore unificata
+                if (data.isManaged) colorClass = 'yos-bg-closed';
+                else if (data.minutesToClosure < 0) colorClass = 'yos-bg-expired';
+                else if (data.minutesToClosure <= 30) colorClass = 'yos-bg-urgent';
+                else if (data.minutesToClosure <= 60) colorClass = 'yos-bg-warning';
+                else if (data.isDifferentDay) colorClass = 'yos-bg-nextday';
+                else colorClass = 'yos-bg-normal';
+
+                const isTopRow = parseInt(bayNum) >= 400;
+                const positionClass = isTopRow ? 'yos-badge-bottom' : 'yos-badge-top';
+
+                let badge = container.querySelector('.yos-door-badge');
+                if (!badge) {
+                    badge = document.createElement('div');
+                    badge.id = `tnt-yos-badge-${bayNum}`; // L'ID tnt- bypassa il MutationObserver del TOOL
+                    container.appendChild(badge);
+                }
+
+                badge.className = `yos-door-badge ${positionClass} ${colorClass}`;
+                badge.innerText = `🔒 ${data.closureTimeStr}`;
+                badge.title = `Baia ${bayNum} | Dest: ${data.dest || '-'} | Partenza: ${data.oraPartenza} | Chiusura: ${data.closureTimeStr} (-${data.closureOffset}m)`;
+            }
+        });
+    }
+
+    // --- LOGICA MODALE PER ESPORTAZIONE DATI ---
+    let activeZone = '400';
+
+    function groupZoneItems(itemList, zone) {
+        const filtered = itemList.filter(d => d.zone === zone);
+        if (zone === '400') {
+            const bassa = filtered.filter(d => d.bayNum >= 401 && d.bayNum <= 429).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
+            const alta = filtered.filter(d => d.bayNum >= 430 && d.bayNum <= 456).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
+            return [{ title: '📍 ZONA 400 BASSA (BAIE 401 - 429)', items: bassa }, { title: '📍 ZONA 400 ALTA (BAIE 430 - 456)', items: alta }];
+        } else if (zone === '300') {
+            const bassa = filtered.filter(d => d.bayNum >= 301 && d.bayNum <= 327).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
+            const alta = filtered.filter(d => d.bayNum >= 328 && d.bayNum <= 355).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
+            return [{ title: '📍 ZONA 300 BASSA (BAIE 301 - 327)', items: bassa }, { title: '📍 ZONA 300 ALTA (BAIE 328 - 355)', items: alta }];
+        }
+        return [];
+    }
+
+    function buildAndShowModal() {
+        if (globalOutboundCache.length === 0) {
+            alert("Nessun dato! Assicurati di aprire il menu 'Outbound View' almeno una volta per dare inizio al caricamento.");
+            return;
+        }
+
+        const existing = document.getElementById('tnt-yos-modal');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'tnt-yos-modal';
+        modal.className = 'yos-modal-overlay';
+        modal.innerHTML = `
+            <div class="yos-modal-content">
+                <div class="yos-modal-header">
+                    <h3>📊 Outbound Schedulati (Dati estratti alle: ${lastUpdateStr})</h3>
+                    <button class="yos-btn-close" id="yos-close-x">✕</button>
+                </div>
+                <div class="yos-modal-tabs">
+                    <button class="yos-tab-btn ${activeZone === '400' ? 'active' : ''}" id="tab-400">Zona 400</button>
+                    <button class="yos-tab-btn ${activeZone === '300' ? 'active' : ''}" id="tab-300">Zona 300</button>
+                    <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+                        <button class="yos-btn-img" id="top-img-btn">📸 Scarica Immagine</button>
+                        <button class="yos-btn-csv" id="top-csv-btn">📥 Scarica CSV</button>
+                        <label style="font-size:12px; margin-left:5px;"><input type="checkbox" id="yos-select-all"> Seleziona Tutti</label>
+                    </div>
+                </div>
+                <div class="yos-modal-body">
+                    <table class="yos-table">
+                        <thead>
+                            <tr><th style="width: 40px;">Sel.</th><th>Baia / Pos.</th><th>Giorno</th><th>Ora Partenza</th><th>Destinazione</th><th>Orario Chiusura</th><th>Tempo Rimanente</th><th>Stato</th></tr>
+                        </thead>
+                        <tbody id="yos-table-body"></tbody>
+                    </table>
+                </div>
+                <div class="yos-modal-footer">
+                    <button class="yos-btn-close" id="yos-close-btn">Chiudi</button>
+                    <div style="display:flex; gap:10px;">
+                        <button class="yos-btn-img" id="bot-img-btn">📸 Scarica Immagine PNG</button>
+                        <button class="yos-btn-csv" id="bot-csv-btn">📥 Scarica CSV Selezione</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        document.getElementById('yos-close-x').onclick = () => modal.remove();
+        document.getElementById('yos-close-btn').onclick = () => modal.remove();
+        document.getElementById('tab-400').onclick = () => { activeZone = '400'; updateTabStyles(); renderTableRows(); };
+        document.getElementById('tab-300').onclick = () => { activeZone = '300'; updateTabStyles(); renderTableRows(); };
+        document.getElementById('yos-select-all').onchange = (e) => { document.querySelectorAll('.yos-row-check').forEach(cb => cb.checked = e.target.checked); };
+
+        document.getElementById('top-csv-btn').onclick = downloadCSV; document.getElementById('bot-csv-btn').onclick = downloadCSV;
+        document.getElementById('top-img-btn').onclick = generateImage; document.getElementById('bot-img-btn').onclick = generateImage;
+
+        renderTableRows();
+    }
+
+    function updateTabStyles() {
+        document.getElementById('tab-400').className = `yos-tab-btn ${activeZone === '400' ? 'active' : ''}`;
+        document.getElementById('tab-300').className = `yos-tab-btn ${activeZone === '300' ? 'active' : ''}`;
+    }
+
+    function renderTableRows() {
+        const tbody = document.getElementById('yos-table-body');
+        tbody.innerHTML = '';
+        const groups = groupZoneItems(globalOutboundCache, activeZone);
+        let totalItems = 0; let allChecked = true;
+
+        groups.forEach(group => {
+            if (group.items.length > 0) {
+                totalItems += group.items.length;
+                const sectionTr = document.createElement('tr');
+                sectionTr.innerHTML = `<td colspan="8" class="yos-section-divider">${group.title}</td>`;
+                tbody.appendChild(sectionTr);
+
+                group.items.forEach(row => {
+                    const tr = document.createElement('tr');
+                    if (row.isManaged) tr.className = 'yos-row-managed';
+                    else if (row.isExpired) tr.className = 'yos-row-expired';
+                    else if (row.isUrgent) tr.className = 'yos-row-urgent';
+                    else if (row.isImminent) tr.className = 'yos-row-imminent';
+                    else if (row.isWithin180Min) tr.className = 'yos-row-waiting-window';
+
+                    const isChecked = row.isWithin180Min || row.isManaged ? 'checked' : '';
+                    if (!isChecked) allChecked = false;
+
+                    let statusDisplay = 'In attesa';
+                    if (row.isManaged) statusDisplay = '<span style="color:#28a745; font-weight:bold;">CHIUSO</span>';
+                    else if (row.isExpired) statusDisplay = '<span style="color:#f44336; font-weight:bold;">🚨 SCADUTO</span>';
+                    else if (row.isUrgent) statusDisplay = '<span style="color:#ffda6a; font-weight:bold;">⚠️ DA CHIUDERE</span>';
+                    else if (row.isImminent) statusDisplay = '<span style="color:#ff9800; font-weight:bold;">🟠 CHIUSURA IMMINENTE</span>';
+
+                    tr.innerHTML = `
+                        <td><input type="checkbox" class="yos-row-check" data-bay="${row.bay}" data-time="${row.oraPartenza}" ${isChecked}></td>
+                        <td><strong>${row.bay}</strong></td>
+                        <td>${row.giorno}</td>
+                        <td>${row.oraPartenza}</td>
+                        <td><strong>${row.dest}</strong></td>
+                        <td><strong>${row.closureTimeStr} (-${row.closureOffset}m)</strong></td>
+                        <td><strong>${formatRemainingTime(row.minutesToClosure, row.isManaged)}</strong></td>
+                        <td>${statusDisplay}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+        });
+
+        if (totalItems === 0) { tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 20px; color: #888;">Nessun mezzo in memoria.</td></tr>`; }
+        const selectAllCb = document.getElementById('yos-select-all');
+        if (selectAllCb) selectAllCb.checked = allChecked;
+    }
+
+    function getSelectedData() {
+        const selectedData = [];
+        document.querySelectorAll('.yos-row-check').forEach(cb => {
+            if (cb.checked) {
+                const bay = cb.getAttribute('data-bay'); const time = cb.getAttribute('data-time');
+                const found = globalOutboundCache.find(d => d.bay === bay && d.oraPartenza === time);
+                if (found) selectedData.push(found);
+            }
+        });
+        return selectedData;
+    }
+
+    function downloadCSV() {
+        const selectedData = getSelectedData();
+        if (selectedData.length === 0) { alert('Seleziona almeno una riga da scaricare!'); return; }
+        let csvContent = 'data:text/csv;charset=utf-8,Zona,Baia,Giorno,Ora Partenza,Destinazione,Orario Chiusura,Tempo Rimanente,Stato\n';
+        selectedData.forEach(r => {
+            const remaining = formatRemainingTime(r.minutesToClosure, r.isManaged);
+            const stato = r.isManaged ? 'CHIUSO' : (r.isExpired ? 'SCADUTO' : (r.isUrgent ? 'DA CHIUDERE' : (r.isImminent ? 'CHIUSURA IMMINENTE' : 'In attesa')));
+            csvContent += `"${r.zone}","${r.bay}","${r.giorno}","${r.oraPartenza}","${r.dest}","${r.closureTimeStr}","${remaining}","${stato}"\n`;
+        });
+        const link = document.createElement('a'); link.setAttribute('href', encodeURI(csvContent));
+        link.setAttribute('download', `Outbound_Zona_${activeZone}_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    }
+
+    function generateImage() {
+        const selectedData = getSelectedData();
+        if (selectedData.length === 0) { alert('Seleziona almeno una riga da esportare!'); return; }
+        const groups = groupZoneItems(selectedData, activeZone);
+        const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
+        const rowHeight = 38, subHeaderHeight = 32, mainHeaderHeight = 85, width = 1000;
+        let totalRows = 0, totalSubHeaders = 0;
+        groups.forEach(g => { if (g.items.length > 0) { totalSubHeaders++; totalRows += g.items.length; } });
+        const height = mainHeaderHeight + (totalSubHeaders * subHeaderHeight) + (totalRows * rowHeight) + 20;
+        canvas.width = width * 2; canvas.height = height * 2; ctx.scale(2, 2);
+
+        ctx.fillStyle = '#1e1e1e'; ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = '#007bff'; ctx.fillRect(0, 0, width, 45);
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 16px Roboto, sans-serif';
+        ctx.fillText(`OUTBOUND SCHEDULE — ZONA ${activeZone}`, 20, 28);
+        const now24h = `${String(new Date().getHours()).padStart(2, '0')}:${String(new Date().getMinutes()).padStart(2, '0')}`;
+        ctx.font = '12px Roboto, sans-serif'; ctx.fillText(`Aggiornato ore: ${now24h}`, width - 160, 28);
+        ctx.fillStyle = '#2d2d2d'; ctx.fillRect(0, 45, width, 40);
+        ctx.fillStyle = '#aaaaaa'; ctx.font = 'bold 12px Roboto, sans-serif';
+        ctx.fillText('BAIA', 20, 68); ctx.fillText('GIORNO', 90, 68); ctx.fillText('PARTENZA', 180, 68);
+        ctx.fillText('DESTINAZIONE', 290, 68); ctx.fillText('ORARIO CHIUSURA', 420, 68); ctx.fillText('TEMPO RIMANENTE', 580, 68); ctx.fillText('STATO', 780, 68);
+
+        let y = 85;
+        groups.forEach(g => {
+            if (g.items.length > 0) {
+                ctx.fillStyle = '#0d47a1'; ctx.fillRect(0, y, width, subHeaderHeight);
+                ctx.fillStyle = '#ffffff'; ctx.font = 'bold 13px Roboto, sans-serif';
+                ctx.fillText(g.title, 20, y + 21);
+                y += subHeaderHeight;
+                g.items.forEach((r, i) => {
+                    if (r.isManaged) { ctx.fillStyle = 'rgba(40, 167, 69, 0.2)'; ctx.fillRect(0, y, width, rowHeight); ctx.fillStyle = '#28a745'; ctx.fillRect(0, y, 6, rowHeight); }
+                    else if (r.isExpired) { ctx.fillStyle = 'rgba(244, 67, 54, 0.2)'; ctx.fillRect(0, y, width, rowHeight); }
+                    else if (r.isUrgent) { ctx.fillStyle = 'rgba(255, 193, 7, 0.18)'; ctx.fillRect(0, y, width, rowHeight); }
+                    else if (r.isImminent) { ctx.fillStyle = 'rgba(255, 152, 0, 0.22)'; ctx.fillRect(0, y, width, rowHeight); }
+                    else { ctx.fillStyle = i % 2 === 0 ? '#252627' : '#1e1e1e'; ctx.fillRect(0, y, width, rowHeight); }
+
+                    ctx.fillStyle = '#333333'; ctx.fillRect(0, y + rowHeight - 1, width, 1);
+                    ctx.font = 'bold 13px Roboto, sans-serif';
+                    ctx.fillStyle = r.isManaged ? '#85e39d' : (r.isExpired ? '#ef9a9a' : (r.isUrgent ? '#ffda6a' : (r.isImminent ? '#ffb74d' : '#ffffff')));
+                    ctx.fillText(r.bay, 20, y + 24);
+
+                    ctx.font = '12px Roboto, sans-serif'; ctx.fillStyle = '#e3e3e3';
+                    ctx.fillText(r.giorno, 90, y + 24); ctx.fillText(r.oraPartenza, 180, y + 24);
+                    ctx.font = 'bold 12px Roboto, sans-serif'; ctx.fillText(r.dest, 290, y + 24);
+                    ctx.fillText(`${r.closureTimeStr} (-${r.closureOffset}m)`, 420, y + 24);
+                    ctx.fillText(formatRemainingTime(r.minutesToClosure, r.isManaged), 580, y + 24);
+
+                    if (r.isManaged) { ctx.fillStyle = '#28a745'; ctx.fillText('CHIUSO', 780, y + 24); }
+                    else if (r.isExpired) { ctx.fillStyle = '#f44336'; ctx.fillText('🚨 SCADUTO', 780, y + 24); }
+                    else if (r.isUrgent) { ctx.fillStyle = '#ffda6a'; ctx.fillText('⚠️ DA CHIUDERE', 780, y + 24); }
+                    else if (r.isImminent) { ctx.fillStyle = '#ff9800'; ctx.fillText('🟠 CHIUSURA IMMINENTE', 780, y + 24); }
+                    else { ctx.fillStyle = '#aaaaaa'; ctx.fillText('In attesa', 780, y + 24); }
+                    y += rowHeight;
+                });
+            }
+        });
+
+        const link = document.createElement('a'); link.download = `Outbound_Zona_${activeZone}_${String(new Date().getHours()).padStart(2, '0')}-${String(new Date().getMinutes()).padStart(2, '0')}.png`;
+        link.href = canvas.toDataURL('image/png'); link.click();
+    }
+
+    // --- TIMERS ---
+    setInterval(initUI, 1000);
+    setInterval(fixDateTimeFilter, 1000);
+    setInterval(updateCache, 1500);
+    setInterval(processBadges, 2000);
+})();
