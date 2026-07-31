@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YOS & SPLUNK Sync Overlay - TESTAAAAAAAA
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Sincronizzazione tra Splunk Chute Scans e Plancia YOS (Ricerca Flessibile "Lenient"). Fix conflitti YOS Tool (ID tnt-).
 // @author       Lorenzo Scurati (Fixed)
 // @match        *://*/*
