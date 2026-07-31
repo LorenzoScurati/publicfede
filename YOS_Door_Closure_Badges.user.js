@@ -1,12 +1,12 @@
 // ==UserScript==
-// @name         YOS Door Closure Badges-TEST
+// @name         YOS Door Closure Badges-TESTAAASAS
 // @namespace    http://tampermonkey.net/
-// @version      1.3
+// @version      1.4
 // @description  Unione: Cache Live, UI compatta in basso, Auto-Time (Ieri-Domani) e calcolo accurato Same-Day Fix. Reso invisibile all'observer di YOS Tool.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
-// @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.txt
-// @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.txt
+// @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
+// @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
 
 // @grant        none
 // ==/UserScript==
