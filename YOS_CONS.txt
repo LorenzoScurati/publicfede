@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YOS & CONS Sync Overlay (Zone 300/400) + Sweep & Time Logic V8.2
 // @namespace    http://tampermonkey.net/
-// @version      8.2
+// @version      1.0
 // @description  Andata=1 Giro, Ritorno=2°. Minimo 2 Min & 2 Giri. Click Reset Filter a fine ciclo per sblocco UI.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
