@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V1.6
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V1.8
 // @namespace    http://tampermonkey.net/
-// @version      1.6
-// @description  DOM UI Fix (Icona + Colli), Doppio Click Sicuro su Reset Filter, Setup Ripristinato.
+// @version      1.8
+// @description  Doppio Click = Single Check. Modale YOS Iniettata con dettagli e colli live.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -46,11 +46,11 @@
             background-color: rgba(0, 0, 0, 0.6);
             padding: 1px 5px; border-radius: 3px; z-index: 99; pointer-events: none;
             white-space: nowrap; transition: background-color 0.3s, color 0.3s, border 0.3s;
-            display: flex; align-items: center; justify-content: center;
         }
         .yos-zone-400 { top: 18% !important; }
         .yos-zone-300 { top: 82% !important; }
 
+        /* Badge per i Colli "incollato" al box principale */
         .yos-piece-count-badge {
             position: absolute; left: 50%; transform: translateX(-50%);
             font-size: 11px; font-weight: bold; color: #0df;
@@ -112,6 +112,15 @@
             background: #333; color: white; border: 1px solid #555; padding: 4px 8px;
             border-radius: 4px; outline: none; font-weight: bold; cursor: pointer; min-width: 110px;
         }
+        
+        /* Modale YOS Custom Styling */
+        .yos-cons-injection-row {
+            margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); width: 100%;
+        }
+        .yos-cons-data-card {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;
+            background: rgba(0,0,0,0.25); padding: 6px 10px; border-radius: 4px; font-size: 12px; border-left: 3px solid #0df;
+        }
     `;
     document.head.appendChild(style);
 
@@ -136,21 +145,18 @@
         });
     }
 
-    // NUOVA FUNZIONE: Doppio click sicuro sul reset
-    function forceSicuroResetFilter() {
-        console.log("[YOS-SYNC] 🧹 Click di sicurezza su 'Reset filter'...");
+    function deepClearFilters() {
         const resetBtn = document.querySelector('button[title="Reset filter"]');
-        if (resetBtn) {
-            resetBtn.click();
-            setTimeout(() => { if (resetBtn) resetBtn.click(); }, 300);
-            
-            // Per sicurezza chiude anche le piccole X sulle chips
-            const closeButtons = document.querySelectorAll('button.mat-icon-button');
-            closeButtons.forEach(btn => {
-                const icon = btn.querySelector('mat-icon');
-                if (icon && icon.innerText.trim() === 'close') btn.click();
-            });
-        }
+        if (resetBtn) forceAggressiveClick(resetBtn);
+
+        const closeButtons = document.querySelectorAll('button.mat-icon-button');
+        closeButtons.forEach(btn => {
+            const icon = btn.querySelector('mat-icon');
+            if (icon && icon.innerText.trim() === 'close') {
+                const style = window.getComputedStyle(btn);
+                if (style.visibility !== 'hidden' && style.display !== 'none') forceAggressiveClick(btn);
+            }
+        });
     }
 
     // ==========================================
@@ -172,8 +178,8 @@
                     btn.innerHTML = '⏳ Riavvio in corso...';
                     btn.style.background = '#ffc107'; 
                     GM_setValue('cons_active_trailers', '{}');
-                    GM_setValue('cons_initial_scan_done', false); 
-                    forceSicuroResetFilter();
+                    GM_setValue('cons_initial_scan_done', false);
+                    deepClearFilters();
                     setTimeout(() => location.reload(), 500);
                     return; 
                 }
@@ -235,9 +241,8 @@
         const targetUnit = GM_getValue('cons_target_unittype', 'NONE');
         
         GM_setValue('cons_scan_state', 'RUNNING');
-        GM_setValue('cons_initial_scan_done', false);
         
-        setTimeout(forceSicuroResetFilter, 500);
+        setTimeout(deepClearFilters, 500);
 
         setTimeout(() => {
             const originSelect = document.querySelector('mat-select[formcontrolname="originLocCd"]');
@@ -282,7 +287,7 @@
                 GM_setValue('cons_hard_reset_command', false);
                 GM_setValue('cons_active_trailers', '{}');
                 GM_setValue('cons_initial_scan_done', false);
-                forceSicuroResetFilter();
+                deepClearFilters();
                 setTimeout(() => location.reload(), 500);
                 return;
             }
@@ -296,7 +301,7 @@
                 else if (dbCooldownSeconds <= 0 && completedSweeps >= 2) {
                     isAutoScanActive = false; 
                     GM_setValue('cons_scan_state', 'COMPLETED');
-                    GM_setValue('cons_initial_scan_done', true); 
+                    GM_setValue('cons_initial_scan_done', true); // SBLOCCA IL SINGLE CHECK!
                     
                     const btn = document.getElementById('tnt-cons-autoscan-btn');
                     if (btn) {
@@ -304,7 +309,8 @@
                         btn.style.background = '#007bff'; 
                     }
 
-                    forceSicuroResetFilter();
+                    const finalRefreshBtn = document.querySelector('button[title="Reset filter"]');
+                    if (finalRefreshBtn) forceAggressiveClick(finalRefreshBtn);
                 }
             }
         }
@@ -326,11 +332,11 @@
         let targetId = queue.shift();
         GM_setValue('cons_single_check_queue', JSON.stringify(queue));
         
-        console.log(`[YOS-SYNC] 🔍 SINGLE CHECK avviato per Trailer (Chiuso): ${targetId}`);
+        console.log(`[YOS-SYNC] 🔍 SINGLE CHECK avviato per Trailer (Chiuso / Doppio Click): ${targetId}`);
         isProcessingCommand = true;
         GM_setValue('cons_scan_state', 'SINGLE_CHECK'); 
 
-        // Pulisce SOLO le caselle di testo per non perdere le ore
+        // 1. NON CLICCARE RESET FILTER QUI! Azzera solo le caselle di testo
         const inputs = document.querySelectorAll('input[formcontrolname="trailerAssetId"], input[formcontrolname="consId"], input[formcontrolname="assetId"]');
         inputs.forEach(i => {
             i.value = '';
@@ -347,67 +353,67 @@
 
             setTimeout(() => {
                 const refreshBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
-                if(refreshBtn) refreshBtn.click();
+                forceAggressiveClick(refreshBtn);
 
-                // Aspetta 3.5 secondi che carichi il record
+                // Aspetta che carichi la riga, poi clicca "View"
                 setTimeout(() => {
                     const viewBtns = document.querySelectorAll('button[title="Click to view piece count"]');
                     if (viewBtns.length > 0) {
-                        viewBtns.forEach(btn => btn.click());
+                        viewBtns.forEach(btn => forceAggressiveClick(btn));
                     }
 
-                    // Aspetta altri 3 secondi per leggere i colli espansi
+                    // Attende 3500ms affinchè i colli vengano scaricati dal server
                     setTimeout(() => {
-                        try {
-                            let newRecords = [];
-                            let pieceCountIndex = -1;
-                            document.querySelectorAll('thead th').forEach((th, idx) => {
-                                if (th.innerText.toUpperCase().includes('PIECE COUNT')) pieceCountIndex = idx;
-                            });
+                        let newRecords = [];
+                        let pieceCountIndex = -1;
+                        document.querySelectorAll('thead th').forEach((th, idx) => {
+                            if (th.innerText.toUpperCase().includes('PIECE COUNT')) pieceCountIndex = idx;
+                        });
 
-                            const rows = document.querySelectorAll('tbody tr');
-                            rows.forEach(row => {
-                                const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
-                                if (!tIdNode || tIdNode.innerText.trim().toUpperCase() !== targetId) return;
+                        const rows = document.querySelectorAll('tbody tr');
+                        rows.forEach(row => {
+                            const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
+                            if (!tIdNode || tIdNode.innerText.trim().toUpperCase() !== targetId) return;
 
-                                const stateNode = row.querySelector('td.mat-column-positionState');
-                                const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
-                                if (state === 'ABANDONED') return; 
-                                
-                                const consIdNode = row.querySelector('td.mat-column-consId');
-                                const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
-                                const unitTypeNode = row.querySelector('td.mat-column-unitType');
-                                const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
-                                const assetIdNode = row.querySelector('td.mat-column-assetId');
-                                const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
+                            const stateNode = row.querySelector('td.mat-column-positionState');
+                            const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
+                            if (state === 'ABANDONED') return; 
+                            
+                            const consIdNode = row.querySelector('td.mat-column-consId');
+                            const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
+                            const unitTypeNode = row.querySelector('td.mat-column-unitType');
+                            const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
+                            const assetIdNode = row.querySelector('td.mat-column-assetId');
+                            const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
-                                // Estrazione Colli
-                                let pieceCount = 0;
-                                const pieceSpan = row.querySelector('.piece-count');
-                                if (pieceSpan) {
-                                    pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
-                                } else {
-                                    const cells = row.querySelectorAll('td');
-                                    if (pieceCountIndex > -1 && cells[pieceCountIndex]) {
-                                        pieceCount = parseInt(cells[pieceCountIndex].innerText.replace(/\D/g, ''), 10) || 0;
-                                    }
+                            // Estrazione Colli
+                            let pieceCount = 0;
+                            const pieceSpan = row.querySelector('.piece-count');
+                            if (pieceSpan) {
+                                pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
+                            } else {
+                                const cells = row.querySelectorAll('td');
+                                if (pieceCountIndex > -1 && cells[pieceCountIndex]) {
+                                    pieceCount = parseInt(cells[pieceCountIndex].innerText.replace(/\D/g, ''), 10) || 0;
                                 }
+                            }
 
-                                if (consId !== '') newRecords.push({ state, assetId, unitType, pieceCount, consId });
-                            });
+                            if (consId !== '') newRecords.push({ state, assetId, unitType, pieceCount, consId });
+                        });
 
-                            // Salva i dati appena letti
+                        // Aggiorna memoria
+                        if (newRecords.length > 0) {
                             activeTrailers[targetId] = newRecords;
                             GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
                             GM_setValue('cons_last_heartbeat', Date.now());
-                        } catch(e) { console.error("Errore lettura Single Check:", e); }
+                        }
 
-                        // -------------------------------------------------------------
-                        // FINE SINGLE CHECK: Clicchiamo Reset Filter Sicuro!
-                        // -------------------------------------------------------------
-                        forceSicuroResetFilter();
+                        // FINE SINGLE CHECK: Ora sì che clicchiamo Reset Filter!
+                        const finalResetBtn = document.querySelector('button[title="Reset filter"]');
+                        if (finalResetBtn) forceAggressiveClick(finalResetBtn);
                         
                         setTimeout(() => {
+                            // Cliccando Reset abbiamo distrutto IMRH e 24h. Forziamo il re-setup.
                             console.log("[YOS-SYNC] 🔄 Ripristino setup base dopo Single Check...");
                             isInitializing = true;
                             hasInitializedFilters = false;
@@ -415,10 +421,10 @@
                             isProcessingCommand = false;
                             lastClickTime = Date.now();
                             GM_setValue('cons_scan_state', 'RUNNING');
-                        }, 1500);
+                        }, 1000);
 
-                    }, 3000); 
-                }, 3500); 
+                    }, 3500); 
+                }, 2500); 
             }, 500);
         }, 500);
 
@@ -514,6 +520,7 @@
                 const assetIdNode = row.querySelector('td.mat-column-assetId');
                 const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
+                // Nel check normale il View non viene cliccato, si affida ai dati standard
                 let pieceCount = 0;
                 const pieceSpan = row.querySelector('.piece-count');
                 if (pieceSpan) {
@@ -556,7 +563,7 @@
     }
 
     // ==========================================
-    // LOGICA YOS (Iniezione, Monitor & Control)
+    // LOGICA YOS (Iniezione, Monitor, Control & Modal)
     // ==========================================
     function renderYosRemoteControl() {
         if (!document.title.includes('CONS Maintenance')) {
@@ -654,11 +661,71 @@
         }
     }
 
+    // NUOVA FUNZIONE: Iniezione Dati CONS nella Modale YOS
+    function injectConsDataIntoModal() {
+        if (document.title.includes('CONS Maintenance')) return;
+        
+        const modal = document.querySelector('app-door-unit-information');
+        if (!modal) return;
+        
+        const historyContainer = modal.querySelector('.door-info__movmt-history');
+        if (!historyContainer) return;
+
+        let currentTrailerId = GM_getValue('yos_last_clicked_trailer', '');
+        
+        // Verifica dal form della modale se abbiamo aperto un altro trailer
+        const unitInput = modal.querySelector('input#unit-id');
+        if (unitInput && unitInput.value) {
+            currentTrailerId = unitInput.value.trim().toUpperCase();
+        }
+
+        let injectedDiv = historyContainer.querySelector('.yos-cons-injection-row');
+        if (!injectedDiv) {
+            injectedDiv = document.createElement('div');
+            injectedDiv.className = 'row door-info__movmt-section-row yos-cons-injection-row';
+            historyContainer.appendChild(injectedDiv);
+        }
+
+        const activeTrailersStr = GM_getValue('cons_active_trailers', '{}');
+        let currentConsTrailers = {};
+        try { currentConsTrailers = JSON.parse(activeTrailersStr); } catch(e){}
+
+        const records = currentConsTrailers[currentTrailerId] || [];
+        const scanState = GM_getValue('cons_scan_state', 'RUNNING');
+        
+        let htmlContent = `<div class="col-12">
+            <div class="door-info__movmt-key" style="color: #0df; margin-bottom: 8px; font-size: 14px;">CONS Live Data (Trazione: ${currentTrailerId})</div>`;
+
+        if (scanState === 'SINGLE_CHECK') {
+            htmlContent += `<div style="color: #ffc107; padding: 5px;">⏳ Scansione in corso su CONS... attendere.</div>`;
+        } else if (records.length > 0) {
+            records.forEach(r => {
+                let pzColor = r.pieceCount > 0 ? '#ffc107' : '#aaa';
+                htmlContent += `
+                <div class="yos-cons-data-card">
+                    <span style="min-width: 100px;"><b>ID:</b> <span style="color:#28a745;">${r.consId}</span></span>
+                    <span style="min-width: 70px;"><b>Tipo:</b> ${r.unitType}</span>
+                    <span style="min-width: 90px;"><b>Asset:</b> ${r.assetId}</span>
+                    <span style="font-weight: bold; color: ${pzColor};">${r.pieceCount} pz</span>
+                </div>`;
+            });
+        } else {
+            htmlContent += `<div style="color: #aaa; padding: 5px;">Nessun dato CONS memorizzato.</div>`;
+        }
+
+        htmlContent += `</div>`;
+
+        if (injectedDiv.innerHTML !== htmlContent) {
+            injectedDiv.innerHTML = htmlContent;
+        }
+    }
+
     function injectIntoYosContainers() {
         const containers = document.querySelectorAll('div[id^="container_"]');
         if (containers.length === 0) return;
 
         renderYosRemoteControl();
+        injectConsDataIntoModal(); // Richiama l'update della modale
 
         const activeTrailersStr = GM_getValue('cons_active_trailers', '{}');
         let currentConsTrailers = {};
@@ -684,7 +751,6 @@
 
             if (!isZone300 && !isZone400) { if (customInfo) customInfo.remove(); return; }
 
-            // FIX STRUTTURALE DOM per mantenere l'icona separata dai colli
             if (!customInfo) {
                 customInfo = document.createElement('div');
                 customInfo.id = 'tnt-custom-info-' + bayNum;
@@ -693,20 +759,13 @@
                 if (isZone400) customInfo.classList.add('yos-zone-400');
                 if (isZone300) customInfo.classList.add('yos-zone-300');
                 
-                // SPAN separato per contenere ✅, X, ! o ?
-                let statusSpan = document.createElement('span');
-                statusSpan.className = 'yos-status-text';
-                customInfo.appendChild(statusSpan);
+                container.appendChild(customInfo);
 
-                // DIV separato per il badge dei colli
                 let pieceBadge = document.createElement('div');
                 pieceBadge.className = 'yos-piece-count-badge';
-                customInfo.appendChild(pieceBadge);
-
-                container.appendChild(customInfo);
+                customInfo.appendChild(pieceBadge); 
             }
 
-            let statusSpan = customInfo.querySelector('.yos-status-text');
             let pieceBadge = customInfo.querySelector('.yos-piece-count-badge');
             
             const unitIdMatch = parentUnit.id.match(/unit_(\d+)/);
@@ -714,6 +773,28 @@
             if (unitIdMatch) {
                 const nameDiv = document.getElementById('unitname_' + unitIdMatch[1]);
                 if (nameDiv) trailerId = nameDiv.innerText.trim().toUpperCase();
+            }
+
+            // =======================================================
+            // NUOVO TRIGGER: Doppio click sulla baia per Single Check
+            // =======================================================
+            if (!container.classList.contains('yos-dblclick-bound')) {
+                container.classList.add('yos-dblclick-bound');
+                container.addEventListener('dblclick', function() {
+                    if (trailerId !== "") {
+                        console.log("[YOS-SYNC] 🖱️ Doppio Clic Rilevato su Trailer: " + trailerId);
+                        GM_setValue('yos_last_clicked_trailer', trailerId);
+
+                        // Aggiunge alla coda forzata del Single Check
+                        let queueStr = GM_getValue('cons_single_check_queue', "[]");
+                        let queue = [];
+                        try { queue = JSON.parse(queueStr); } catch(e){}
+                        if (!queue.includes(trailerId)) {
+                            queue.push(trailerId);
+                            GM_setValue('cons_single_check_queue', JSON.stringify(queue));
+                        }
+                    }
+                });
             }
 
             const isReady = container.classList.contains('unit_ready_outline') && container.querySelector('.doorstatus-ready-loaded') !== null;
@@ -764,13 +845,15 @@
                 }
             } 
 
-            // Applica stili visivi in modo sicuro (non distrugge i nodi figli)
-            if (statusSpan && statusSpan.innerText !== targetText) statusSpan.innerText = targetText;
+            // Applica stili visivi se cambiati
+            if (customInfo.innerText.split('\n')[0] !== targetText) {
+                customInfo.innerText = targetText;
+                if (pieceBadge) customInfo.appendChild(pieceBadge);
+            }
             if (customInfo.style.backgroundColor !== targetBg) customInfo.style.backgroundColor = targetBg;
             if (customInfo.style.color !== targetColor) customInfo.style.color = targetColor;
             if (customInfo.style.border !== targetBorder) customInfo.style.border = targetBorder;
 
-            // Mostra o nascondi il badge dei colli
             if (totalPieces > 0 && pieceBadge) {
                 if (pieceBadge.innerText !== totalPieces + " pz") pieceBadge.innerText = totalPieces + " pz";
                 if (pieceBadge.style.display !== "block") pieceBadge.style.display = "block";
