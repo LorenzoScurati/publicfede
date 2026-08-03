@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V1.5
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  Single Check Fixato (No Reset preventivo). Posizione Colli Incollata. Reset Filter Finale.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
