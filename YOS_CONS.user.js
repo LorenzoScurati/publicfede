@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.5
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V1.5
 // @namespace    http://tampermonkey.net/
-// @version      2.5
-// @description  Base V1.6 INTATTA (Icone/DOM/Reset Sicuro) + Doppio Clic Modale + Blue Scan 30s.
+// @version      1.5
+// @description  Single Check Fixato (No Reset preventivo). Posizione Colli Incollata. Reset Filter Finale.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -29,13 +29,12 @@
     
     let dbCooldownSeconds = 120; 
     let completedSweeps = 0;     
-    let blueWaitTimer = 0; // Timer 30 secondi per le casse blu
     
     let activeTrailers = {}; 
     let tempCycleTrailers = {};
 
     // ==========================================
-    // STILI CSS (Base V1.6 + Modale)
+    // STILI CSS
     // ==========================================
     const style = document.createElement('style');
     style.innerHTML = `
@@ -47,11 +46,11 @@
             background-color: rgba(0, 0, 0, 0.6);
             padding: 1px 5px; border-radius: 3px; z-index: 99; pointer-events: none;
             white-space: nowrap; transition: background-color 0.3s, color 0.3s, border 0.3s;
-            display: flex; align-items: center; justify-content: center;
         }
         .yos-zone-400 { top: 18% !important; }
         .yos-zone-300 { top: 82% !important; }
 
+        /* NUOVO: Badge per i Colli "incollato" al box principale */
         .yos-piece-count-badge {
             position: absolute; left: 50%; transform: translateX(-50%);
             font-size: 11px; font-weight: bold; color: #0df;
@@ -113,15 +112,6 @@
             background: #333; color: white; border: 1px solid #555; padding: 4px 8px;
             border-radius: 4px; outline: none; font-weight: bold; cursor: pointer; min-width: 110px;
         }
-
-        /* STILI MODALE YOS INIETTATA */
-        .yos-cons-injection-row {
-            margin-top: 15px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.1); width: 100%;
-        }
-        .yos-cons-data-card {
-            display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;
-            background: rgba(0,0,0,0.25); padding: 6px 10px; border-radius: 4px; font-size: 12px; border-left: 3px solid #0df;
-        }
     `;
     document.head.appendChild(style);
 
@@ -146,19 +136,18 @@
         });
     }
 
-    function forceSicuroResetFilter() {
-        console.log("[YOS-SYNC] 🧹 Click di sicurezza su 'Reset filter'...");
+    function deepClearFilters() {
         const resetBtn = document.querySelector('button[title="Reset filter"]');
-        if (resetBtn) {
-            resetBtn.click();
-            setTimeout(() => { if (resetBtn) resetBtn.click(); }, 300);
-            
-            const closeButtons = document.querySelectorAll('button.mat-icon-button');
-            closeButtons.forEach(btn => {
-                const icon = btn.querySelector('mat-icon');
-                if (icon && icon.innerText.trim() === 'close') btn.click();
-            });
-        }
+        if (resetBtn) forceAggressiveClick(resetBtn);
+
+        const closeButtons = document.querySelectorAll('button.mat-icon-button');
+        closeButtons.forEach(btn => {
+            const icon = btn.querySelector('mat-icon');
+            if (icon && icon.innerText.trim() === 'close') {
+                const style = window.getComputedStyle(btn);
+                if (style.visibility !== 'hidden' && style.display !== 'none') forceAggressiveClick(btn);
+            }
+        });
     }
 
     // ==========================================
@@ -181,7 +170,7 @@
                     btn.style.background = '#ffc107'; 
                     GM_setValue('cons_active_trailers', '{}');
                     GM_setValue('cons_initial_scan_done', false);
-                    forceSicuroResetFilter();
+                    deepClearFilters();
                     setTimeout(() => location.reload(), 500);
                     return; 
                 }
@@ -190,7 +179,7 @@
                 if (isAutoScanActive) {
                     btn.innerHTML = '🔄 Auto-Scan: ON';
                     btn.style.background = '#28a745'; 
-                    GM_setValue('cons_scan_state', GM_getValue('cons_initial_scan_done', false) ? 'IDLE' : 'RUNNING');
+                    GM_setValue('cons_scan_state', 'RUNNING');
                 } else {
                     btn.innerHTML = '⏸️ Auto-Scan: PAUSA';
                     btn.style.background = '#dc3545'; 
@@ -212,36 +201,26 @@
         if (infoBox) {
             if (isInitializing) {
                 infoBox.innerHTML = "Avvio in: <span class='text-warning'>" + initCountdown + "s</span>";
+            } else if (!isAutoScanActive && dbCooldownSeconds <= 0 && completedSweeps >= 2) {
+                infoBox.innerHTML = "<span class='text-ready'>IN PAUSA: Dati Pronti (2+ Giri)</span>";
             } else if (!isAutoScanActive) {
                 infoBox.innerHTML = "<span class='text-warning'>IN PAUSA MANUALE</span>";
             } else {
-                const isInitialDone = GM_getValue('cons_initial_scan_done', false);
-                if (!isInitialDone) {
-                    const mins = Math.floor(Math.max(0, dbCooldownSeconds) / 60);
-                    const secs = Math.max(0, dbCooldownSeconds) % 60;
-                    const secsPadded = secs < 10 ? "0" + secs : secs;
-                    if (dbCooldownSeconds <= 0 && completedSweeps < 2) {
-                        infoBox.innerHTML = "<span class='text-warning'>Attesa cicli Iniziali... (" + completedSweeps + "/2)</span>";
-                    } else {
-                        infoBox.innerHTML = "Scan Generale in: <span class='text-warning'>" + mins + ":" + secsPadded + "</span> <small>(" + completedSweeps + "/2 giri)</small>";
-                    }
+                const mins = Math.floor(Math.max(0, dbCooldownSeconds) / 60);
+                const secs = Math.max(0, dbCooldownSeconds) % 60;
+                const secsPadded = secs < 10 ? "0" + secs : secs;
+                
+                if (dbCooldownSeconds <= 0 && completedSweeps < 2) {
+                    infoBox.innerHTML = "<span class='text-warning'>Attesa cicli... (" + completedSweeps + "/2)</span>";
                 } else {
-                    const scanState = GM_getValue('cons_scan_state', 'IDLE');
-                    if (scanState === 'PRIORITY_CHECK') {
-                        infoBox.innerHTML = "<span style='color:#9c27b0;'>🟣 DOPPIO CLIC IN CORSO...</span>";
-                    } else if (scanState === 'BLUE_CHECK') {
-                        infoBox.innerHTML = "<span class='text-ready'>🔵 Scan Casse Chiuse...</span>";
-                    } else {
-                        let remain = 30 - blueWaitTimer;
-                        infoBox.innerHTML = `<span class='text-warning'>Pausa: Prossimo check in ${remain}s</span>`;
-                    }
+                    infoBox.innerHTML = "Scan in: <span class='text-warning'>" + mins + ":" + secsPadded + "</span> <small>(" + completedSweeps + "/2 giri)</small>";
                 }
             }
         }
     }
 
     // ==========================================
-    // LOGICA SETUP INIZIALE
+    // LOGICA SETUP
     // ==========================================
     function runSetupSequence() {
         if (hasInitializedFilters) return;
@@ -253,9 +232,8 @@
         const targetUnit = GM_getValue('cons_target_unittype', 'NONE');
         
         GM_setValue('cons_scan_state', 'RUNNING');
-        GM_setValue('cons_initial_scan_done', false);
         
-        setTimeout(forceSicuroResetFilter, 500);
+        setTimeout(deepClearFilters, 500);
 
         setTimeout(() => {
             const originSelect = document.querySelector('mat-select[formcontrolname="originLocCd"]');
@@ -300,7 +278,7 @@
                 GM_setValue('cons_hard_reset_command', false);
                 GM_setValue('cons_active_trailers', '{}');
                 GM_setValue('cons_initial_scan_done', false);
-                forceSicuroResetFilter();
+                deepClearFilters();
                 setTimeout(() => location.reload(), 500);
                 return;
             }
@@ -308,51 +286,48 @@
             if (isInitializing && hasInitializedFilters) {
                 if (initCountdown > 0) initCountdown--;
             } else if (!isInitializing && isAutoScanActive) {
-                
-                const isInitialDone = GM_getValue('cons_initial_scan_done', false);
-                
-                if (!isInitialDone) {
-                    if (dbCooldownSeconds > 0) {
-                        dbCooldownSeconds--;
-                    } 
-                    else if (dbCooldownSeconds <= 0 && completedSweeps >= 2) {
-                        GM_setValue('cons_initial_scan_done', true); 
-                        GM_setValue('cons_scan_state', 'IDLE');
-                        blueWaitTimer = 30; // Al termine, attiva subito la prima ricerca Blu
-                        forceSicuroResetFilter();
+                if (dbCooldownSeconds > 0) {
+                    dbCooldownSeconds--;
+                } 
+                else if (dbCooldownSeconds <= 0 && completedSweeps >= 2) {
+                    isAutoScanActive = false; 
+                    GM_setValue('cons_scan_state', 'COMPLETED');
+                    GM_setValue('cons_initial_scan_done', true); // SBLOCCA IL SINGLE CHECK!
+                    
+                    const btn = document.getElementById('tnt-cons-autoscan-btn');
+                    if (btn) {
+                        btn.innerHTML = '▶️ RIPARTI (Hard Reset)';
+                        btn.style.background = '#007bff'; 
                     }
-                } else {
-                    // FASE 2: GESTIONE TIMER 30 SECONDI (Casse BLU)
-                    let state = GM_getValue('cons_scan_state', 'IDLE');
-                    if (state === 'IDLE') {
-                        let pQ = JSON.parse(GM_getValue('cons_priority_queue', '[]'));
-                        let bQ = JSON.parse(GM_getValue('cons_blue_queue', '[]'));
-                        
-                        if (pQ.length === 0 && bQ.length === 0) {
-                            blueWaitTimer++;
-                            if (blueWaitTimer >= 30) {
-                                // Pescaggio nuove casse blu da YOS
-                                let yosBlue = JSON.parse(GM_getValue('yos_blue_trailers', '[]'));
-                                GM_setValue('cons_blue_queue', JSON.stringify(yosBlue));
-                                blueWaitTimer = 0;
-                            }
-                        }
-                    }
+
+                    const finalRefreshBtn = document.querySelector('button[title="Reset filter"]');
+                    if (finalRefreshBtn) forceAggressiveClick(finalRefreshBtn);
                 }
             }
         }
     }, 1000);
 
     // ==========================================
-    // FASE 2/3: RICERCA MIRATA (BLUE & DOPPIO CLIC)
+    // ESECUZIONE SINGOLO CHECK (PRIORITÀ)
     // ==========================================
-    function executeTargetedCheck(targetId, stateName) {
-        console.log(`[YOS-SYNC] 🔍 Check Mirato: ${targetId} (${stateName})`);
-        
-        isProcessingCommand = true;
-        GM_setValue('cons_scan_state', stateName); 
+    function processSingleCheckQueue() {
+        if (!GM_getValue('cons_initial_scan_done', false)) return false; 
+        if (isProcessingCommand) return true; 
 
-        // Pulisce le caselle input ma preserva le ore
+        let queueStr = GM_getValue('cons_single_check_queue', '[]');
+        let queue = [];
+        try { queue = JSON.parse(queueStr); } catch(e){}
+
+        if (queue.length === 0) return false;
+
+        let targetId = queue.shift();
+        GM_setValue('cons_single_check_queue', JSON.stringify(queue));
+        
+        console.log(`[YOS-SYNC] 🔍 SINGLE CHECK avviato per Trailer (Chiuso): ${targetId}`);
+        isProcessingCommand = true;
+        GM_setValue('cons_scan_state', 'SINGLE_CHECK'); 
+
+        // 1. NON CLICCARE RESET FILTER QUI! Azzera solo le caselle di testo
         const inputs = document.querySelectorAll('input[formcontrolname="trailerAssetId"], input[formcontrolname="consId"], input[formcontrolname="assetId"]');
         inputs.forEach(i => {
             i.value = '';
@@ -369,88 +344,147 @@
 
             setTimeout(() => {
                 const refreshBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
-                if(refreshBtn) refreshBtn.click();
+                forceAggressiveClick(refreshBtn);
 
-                // Aspetta 3.5 secondi che carichi il record mirato
+                // Aspetta che carichi la riga, poi clicca "View"
                 setTimeout(() => {
                     const viewBtns = document.querySelectorAll('button[title="Click to view piece count"]');
                     if (viewBtns.length > 0) {
-                        viewBtns.forEach(btn => { btn.click(); setTimeout(()=> {if(btn) btn.click();}, 300); });
+                        viewBtns.forEach(btn => forceAggressiveClick(btn));
                     }
 
-                    // Attende estrazione colli "View"
+                    // Attende 3500ms affinchè i colli vengano scaricati dal server
                     setTimeout(() => {
-                        try {
-                            let newRecords = [];
-                            let pieceCountIndex = -1;
-                            document.querySelectorAll('thead th').forEach((th, idx) => {
-                                if (th.innerText.toUpperCase().includes('PIECE COUNT')) pieceCountIndex = idx;
-                            });
+                        let newRecords = [];
+                        let pieceCountIndex = -1;
+                        document.querySelectorAll('thead th').forEach((th, idx) => {
+                            if (th.innerText.toUpperCase().includes('PIECE COUNT')) pieceCountIndex = idx;
+                        });
 
-                            const rows = document.querySelectorAll('tbody tr');
-                            rows.forEach(row => {
-                                const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
-                                if (!tIdNode || tIdNode.innerText.trim().toUpperCase() !== targetId) return;
+                        const rows = document.querySelectorAll('tbody tr');
+                        rows.forEach(row => {
+                            const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
+                            if (!tIdNode || tIdNode.innerText.trim().toUpperCase() !== targetId) return;
 
-                                const stateNode = row.querySelector('td.mat-column-positionState');
-                                const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
-                                if (state === 'ABANDONED') return; 
-                                
-                                const consIdNode = row.querySelector('td.mat-column-consId');
-                                const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
-                                const unitTypeNode = row.querySelector('td.mat-column-unitType');
-                                const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
-                                const assetIdNode = row.querySelector('td.mat-column-assetId');
-                                const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
+                            const stateNode = row.querySelector('td.mat-column-positionState');
+                            const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
+                            if (state === 'ABANDONED') return; 
+                            
+                            const consIdNode = row.querySelector('td.mat-column-consId');
+                            const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
+                            const unitTypeNode = row.querySelector('td.mat-column-unitType');
+                            const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
+                            const assetIdNode = row.querySelector('td.mat-column-assetId');
+                            const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
-                                // Estrazione Colli
-                                let pieceCount = 0;
-                                const pieceSpan = row.querySelector('.piece-count');
-                                if (pieceSpan) {
-                                    pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
-                                } else {
-                                    const cells = row.querySelectorAll('td');
-                                    if (pieceCountIndex > -1 && cells[pieceCountIndex]) {
-                                        pieceCount = parseInt(cells[pieceCountIndex].innerText.replace(/\D/g, ''), 10) || 0;
-                                    }
-                                }
-
-                                if (consId !== '') newRecords.push({ state, assetId, unitType, pieceCount, consId });
-                            });
-
-                            // Salva DB
-                            let tempTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}'));
-                            if (newRecords.length > 0) {
-                                tempTrailers[targetId] = newRecords;
+                            // Estrazione Colli
+                            let pieceCount = 0;
+                            const pieceSpan = row.querySelector('.piece-count');
+                            if (pieceSpan) {
+                                pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
                             } else {
-                                tempTrailers[targetId] = []; // Evita loop continui se vuoto
+                                const cells = row.querySelectorAll('td');
+                                if (pieceCountIndex > -1 && cells[pieceCountIndex]) {
+                                    pieceCount = parseInt(cells[pieceCountIndex].innerText.replace(/\D/g, ''), 10) || 0;
+                                }
                             }
-                            GM_setValue('cons_active_trailers', JSON.stringify(tempTrailers));
-                            GM_setValue('cons_last_heartbeat', Date.now());
-                        } catch(e) { console.error("Errore lettura Mirata:", e); }
 
-                        // Reset Sicuro dopo il check (COME DA TUA V1.6)
-                        forceSicuroResetFilter();
+                            if (consId !== '') newRecords.push({ state, assetId, unitType, pieceCount, consId });
+                        });
+
+                        // Aggiorna memoria
+                        if (newRecords.length > 0) {
+                            activeTrailers[targetId] = newRecords;
+                            GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
+                            GM_setValue('cons_last_heartbeat', Date.now());
+                        }
+
+                        // FINE SINGLE CHECK: Ora sì che clicchiamo Reset Filter!
+                        const finalResetBtn = document.querySelector('button[title="Reset filter"]');
+                        if (finalResetBtn) forceAggressiveClick(finalResetBtn);
                         
                         setTimeout(() => {
+                            // Cliccando Reset abbiamo distrutto IMRH e 24h. Forziamo il re-setup.
+                            console.log("[YOS-SYNC] 🔄 Ripristino setup base dopo Single Check...");
                             isInitializing = true;
                             hasInitializedFilters = false;
                             initCountdown = 8;
                             isProcessingCommand = false;
                             lastClickTime = Date.now();
-                            GM_setValue('cons_scan_state', 'IDLE'); // Ritorna in attesa 
-                        }, 1500);
+                            GM_setValue('cons_scan_state', 'RUNNING');
+                        }, 1000);
 
-                    }, 3000); 
-                }, 3500); 
+                    }, 3500); 
+                }, 2500); 
             }, 500);
         }, 500);
+
+        return true;
     }
 
     // ==========================================
-    // FASE 1: SCAN GENERALE (BASE V1.6 COMPLETA)
+    // COMANDI REMOTI (One-Shot Options)
     // ==========================================
-    function performFullGeneralScan() {
+    function checkPendingCommands() {
+        if (isProcessingCommand) return true;
+        const pendingHours = GM_getValue('cons_pending_hours_command', null);
+        const pendingUnit = GM_getValue('cons_pending_unittype_command', null);
+
+        if (pendingHours) {
+            isProcessingCommand = true;
+            GM_setValue('cons_pending_hours_command', null);
+            const selectBox = document.querySelector('mat-select[formcontrolname="hours"]');
+            if (selectBox) {
+                forceAggressiveClick(selectBox);
+                setTimeout(() => {
+                    clickOptionByText(pendingHours + " hours");
+                    setTimeout(() => { isProcessingCommand = false; lastClickTime = Date.now(); }, 1000);
+                }, 500);
+            } else isProcessingCommand = false;
+            return true; 
+        }
+
+        if (pendingUnit) {
+            isProcessingCommand = true;
+            GM_setValue('cons_pending_unittype_command', null);
+            const selectBox = document.querySelector('mat-select[formcontrolname="unitType"]');
+            if (selectBox) {
+                if (pendingUnit === "NONE") {
+                    const parentField = selectBox.closest('.mat-form-field');
+                    const closeBtn = parentField ? parentField.querySelector('button.close-icon') : null;
+                    if (closeBtn && window.getComputedStyle(closeBtn).visibility !== 'hidden') forceAggressiveClick(closeBtn);
+                    setTimeout(() => { isProcessingCommand = false; lastClickTime = Date.now(); }, 1000);
+                } else {
+                    forceAggressiveClick(selectBox);
+                    setTimeout(() => {
+                        clickOptionByText(pendingUnit);
+                        setTimeout(() => { isProcessingCommand = false; lastClickTime = Date.now(); }, 1000);
+                    }, 500);
+                }
+            } else isProcessingCommand = false;
+            return true;
+        }
+        return false;
+    }
+
+    // ==========================================
+    // LOGICA CONS MAINTENANCE (Scanner Principale)
+    // ==========================================
+    function scanConsMaintenance() {
+        if (!document.title.includes('CONS Maintenance')) return;
+        injectConsDashboard();
+
+        if (isInitializing) { runSetupSequence(); return; }
+
+        if (processSingleCheckQueue()) return;
+        if (checkPendingCommands()) return;
+        
+        if (isProcessingCommand || !isAutoScanActive) return;
+
+        const loader = document.querySelector('mat-progress-spinner, .loader');
+        if (loader && loader.offsetHeight > 0) return;
+        if (Date.now() - lastClickTime < 2500) return;
+
         const prevBtn = document.querySelector('button[aria-label="Previous page"]');
         const nextBtn = document.querySelector('button[aria-label="Next page"]');
         if (!prevBtn || !nextBtn) return;
@@ -460,8 +494,6 @@
 
         if (!isRewinding) {
             const rows = document.querySelectorAll('tbody tr');
-            let tempTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}'));
-
             rows.forEach(row => {
                 const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
                 if (!tIdNode) return;
@@ -479,21 +511,22 @@
                 const assetIdNode = row.querySelector('td.mat-column-assetId');
                 const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
+                // Nel check normale il View non viene cliccato, si affida ai dati standard
                 let pieceCount = 0;
                 const pieceSpan = row.querySelector('.piece-count');
                 if (pieceSpan) {
                     pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
                 }
 
-                if (!tempTrailers[tId]) tempTrailers[tId] = [];
-                const isDuplicateConsId = tempTrailers[tId].some(r => r.consId === consId);
+                if (!activeTrailers[tId]) activeTrailers[tId] = [];
+                const isDuplicateConsId = activeTrailers[tId].some(r => r.consId === consId);
                 
                 if (!isDuplicateConsId && consId !== '') {
-                    tempTrailers[tId].push({ state, assetId, unitType, pieceCount, consId });
+                    activeTrailers[tId].push({ state, assetId, unitType, pieceCount, consId });
                 }
             });
 
-            GM_setValue('cons_active_trailers', JSON.stringify(tempTrailers));
+            GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
             GM_setValue('cons_last_heartbeat', Date.now());
 
             if (!isNextDisabled) {
@@ -516,46 +549,6 @@
                 completedSweeps++;
                 const refreshBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
                 forceAggressiveClick(refreshBtn); lastClickTime = Date.now();
-            }
-        }
-    }
-
-    // ==========================================
-    // LOGICA DI CONTROLLO PRINCIPALE (ROUTER)
-    // ==========================================
-    function scanConsMaintenance() {
-        if (!document.title.includes('CONS Maintenance')) return;
-        injectConsDashboard();
-
-        if (isInitializing) { runSetupSequence(); return; }
-        if (isProcessingCommand || !isAutoScanActive) return;
-
-        const loader = document.querySelector('mat-progress-spinner, .loader');
-        if (loader && loader.offsetHeight > 0) return;
-        if (Date.now() - lastClickTime < 2500) return;
-
-        const isInitialDone = GM_getValue('cons_initial_scan_done', false);
-
-        if (!isInitialDone) {
-            // SCANSIONE 100 PAGINE (TUTTO) COME V1.6
-            performFullGeneralScan();
-        } else {
-            // SCANSIONE MIRATA CODA PRIORITARIA (Doppio Clic)
-            let pQ = JSON.parse(GM_getValue('cons_priority_queue', '[]'));
-            if (pQ.length > 0) {
-                let id = pQ.shift();
-                GM_setValue('cons_priority_queue', JSON.stringify(pQ));
-                executeTargetedCheck(id, 'PRIORITY_CHECK');
-                return;
-            }
-
-            // SCANSIONE MIRATA CASSE BLU
-            let bQ = JSON.parse(GM_getValue('cons_blue_queue', '[]'));
-            if (bQ.length > 0) {
-                let id = bQ.shift();
-                GM_setValue('cons_blue_queue', JSON.stringify(bQ));
-                executeTargetedCheck(id, 'BLUE_CHECK');
-                return;
             }
         }
     }
@@ -632,88 +625,30 @@
             const textEl = statusBadge.querySelector('.sync-text');
             const numTrailers = Object.keys(currentConsTrailers).length;
             const scanState = GM_getValue('cons_scan_state', 'RUNNING');
-            const isInitialDone = GM_getValue('cons_initial_scan_done', false);
-            const numBlue = JSON.parse(GM_getValue('yos_blue_trailers', '[]')).length;
 
             if (lastHeartbeat === 0) {
                 statusBadge.style.backgroundColor = '#6c757d'; textEl.innerText = 'CONS in attesa...';
             } 
-            else if (!isInitialDone) {
-                statusBadge.style.backgroundColor = '#007bff'; statusBadge.style.color = 'white'; 
-                textEl.innerText = `🔵 SCANSIONE GENERALE INIZIALE...`;
-            }
-            else if (scanState === 'PRIORITY_CHECK') {
+            else if (scanState === 'SINGLE_CHECK') {
                 statusBadge.style.backgroundColor = '#9c27b0'; statusBadge.style.color = 'white'; 
-                textEl.innerText = `🟣 DOPPIO CLIC IN CORSO...`;
+                textEl.innerText = `🟣 SINGLE CHECK IN CORSO...`;
             }
-            else if (scanState === 'BLUE_CHECK') {
-                statusBadge.style.backgroundColor = '#17a2b8'; statusBadge.style.color = 'white'; 
-                textEl.innerText = `🔵 SCANSIONE CHIUSI IN CORSO...`;
-            }
-            else if (timeDiff < 25000) {
-                statusBadge.style.backgroundColor = '#28a745'; textEl.innerText = `🟢 SYNC ATTIVO (${numBlue} Blu / ${numTrailers} Totali)`;
+            else if (timeDiff < 6000) {
+                statusBadge.style.backgroundColor = '#28a745'; textEl.innerText = `🟢 SYNC ATTIVO (${numTrailers} TRL)`;
+            } else if (timeDiff < 15000) {
+                statusBadge.style.backgroundColor = '#ffc107'; statusBadge.style.color = 'black'; textEl.innerText = `🟡 LENTO/PAUSA (${numTrailers} TRL)`;
             } else {
-                statusBadge.style.backgroundColor = '#dc3545'; statusBadge.style.color = 'white'; 
-                textEl.innerText = `🔴 CONNESSIONE PERSA`;
+                if (scanState === 'COMPLETED') {
+                    let d = new Date(lastHeartbeat);
+                    let hh = String(d.getHours()).padStart(2, '0');
+                    let mm = String(d.getMinutes()).padStart(2, '0');
+                    statusBadge.style.backgroundColor = '#007bff'; statusBadge.style.color = 'white'; 
+                    textEl.innerText = `🔵 CACHE DELLE ${hh}:${mm} (DB Pronto)`;
+                } else {
+                    statusBadge.style.backgroundColor = '#dc3545'; statusBadge.style.color = 'white'; 
+                    textEl.innerText = `🔴 CONNESSIONE PERSA (DB Congelato)`;
+                }
             }
-        }
-    }
-
-    // MODALE YOS INIEZIONE LIVE
-    function injectConsDataIntoModal() {
-        if (document.title.includes('CONS Maintenance')) return;
-        
-        const modal = document.querySelector('app-door-unit-information');
-        if (!modal) return;
-        
-        const historyContainer = modal.querySelector('.door-info__movmt-history');
-        if (!historyContainer) return;
-
-        let currentTrailerId = GM_getValue('yos_last_clicked_trailer', '');
-        
-        const unitInput = modal.querySelector('input#unit-id');
-        if (unitInput && unitInput.value) {
-            currentTrailerId = unitInput.value.trim().toUpperCase();
-        }
-
-        let injectedDiv = historyContainer.querySelector('.yos-cons-injection-row');
-        if (!injectedDiv) {
-            injectedDiv = document.createElement('div');
-            injectedDiv.className = 'row door-info__movmt-section-row yos-cons-injection-row';
-            historyContainer.appendChild(injectedDiv);
-        }
-
-        const activeTrailersStr = GM_getValue('cons_active_trailers', '{}');
-        let currentConsTrailers = {};
-        try { currentConsTrailers = JSON.parse(activeTrailersStr); } catch(e){}
-
-        const records = currentConsTrailers[currentTrailerId] || [];
-        const scanState = GM_getValue('cons_scan_state', 'IDLE');
-        
-        let htmlContent = `<div class="col-12">
-            <div class="door-info__movmt-key" style="color: #0df; margin-bottom: 8px; font-size: 14px;">CONS Live Data (Trazione: ${currentTrailerId})</div>`;
-
-        if (scanState === 'PRIORITY_CHECK') {
-            htmlContent += `<div style="color: #ffc107; padding: 5px;">⏳ Scansione in corso su CONS... attendere.</div>`;
-        } else if (records.length > 0) {
-            records.forEach(r => {
-                let pzColor = r.pieceCount > 0 ? '#ffc107' : '#aaa';
-                htmlContent += `
-                <div class="yos-cons-data-card">
-                    <span style="min-width: 100px;"><b>ID:</b> <span style="color:#28a745;">${r.consId}</span></span>
-                    <span style="min-width: 70px;"><b>Tipo:</b> ${r.unitType}</span>
-                    <span style="min-width: 90px;"><b>Asset:</b> ${r.assetId}</span>
-                    <span style="font-weight: bold; color: ${pzColor};">${r.pieceCount} pz</span>
-                </div>`;
-            });
-        } else {
-            htmlContent += `<div style="color: #aaa; padding: 5px;">Nessun dato CONS (Vuota o non trovata).</div>`;
-        }
-
-        htmlContent += `</div>`;
-
-        if (injectedDiv.innerHTML !== htmlContent) {
-            injectedDiv.innerHTML = htmlContent;
         }
     }
 
@@ -722,7 +657,6 @@
         if (containers.length === 0) return;
 
         renderYosRemoteControl();
-        injectConsDataIntoModal();
 
         const activeTrailersStr = GM_getValue('cons_active_trailers', '{}');
         let currentConsTrailers = {};
@@ -730,8 +664,6 @@
 
         const lastHeartbeat = GM_getValue('cons_last_heartbeat', 0);
         const isCacheOld = (Date.now() - lastHeartbeat) > 1800000; 
-
-        let currentBlueTrailers = []; // Raccoglie le casse blu correnti
 
         containers.forEach(container => {
             if (!/^container_\d+$/.test(container.id)) return;
@@ -750,9 +682,6 @@
 
             if (!isZone300 && !isZone400) { if (customInfo) customInfo.remove(); return; }
 
-            // ==========================================
-            // FIX STRUTTURALE DOM ESATTO DELLA TUA V1.6
-            // ==========================================
             if (!customInfo) {
                 customInfo = document.createElement('div');
                 customInfo.id = 'tnt-custom-info-' + bayNum;
@@ -761,20 +690,13 @@
                 if (isZone400) customInfo.classList.add('yos-zone-400');
                 if (isZone300) customInfo.classList.add('yos-zone-300');
                 
-                // SPAN separato per contenere ✅, X, ! o ?
-                let statusSpan = document.createElement('span');
-                statusSpan.className = 'yos-status-text';
-                customInfo.appendChild(statusSpan);
+                container.appendChild(customInfo);
 
-                // DIV separato per il badge dei colli
                 let pieceBadge = document.createElement('div');
                 pieceBadge.className = 'yos-piece-count-badge';
-                customInfo.appendChild(pieceBadge);
-
-                container.appendChild(customInfo);
+                customInfo.appendChild(pieceBadge); 
             }
 
-            let statusSpan = customInfo.querySelector('.yos-status-text');
             let pieceBadge = customInfo.querySelector('.yos-piece-count-badge');
             
             const unitIdMatch = parentUnit.id.match(/unit_(\d+)/);
@@ -786,34 +708,27 @@
 
             const isReady = container.classList.contains('unit_ready_outline') && container.querySelector('.doorstatus-ready-loaded') !== null;
             if (isReady && trailerId !== "") {
-                if (!currentBlueTrailers.includes(trailerId)) {
-                    currentBlueTrailers.push(trailerId);
+                let trackedStr = GM_getValue('yos_ready_trailers_tracked', "[]");
+                let queuedList = [];
+                try { queuedList = JSON.parse(trackedStr); } catch(e){}
+                
+                if (!queuedList.includes(trailerId)) {
+                    queuedList.push(trailerId);
+                    if (queuedList.length > 200) queuedList.shift(); 
+                    GM_setValue('yos_ready_trailers_tracked', JSON.stringify(queuedList));
+
+                    let singleQueueStr = GM_getValue('cons_single_check_queue', "[]");
+                    let singleQueue = [];
+                    try { singleQueue = JSON.parse(singleQueueStr); } catch(e){}
+
+                    if (!singleQueue.includes(trailerId)) {
+                        singleQueue.push(trailerId);
+                        GM_setValue('cons_single_check_queue', JSON.stringify(singleQueue));
+                    }
                 }
             }
 
-            // ==========================================
-            // TRIGGER DOPPIO CLIC (Priorità Massima)
-            // ==========================================
-            if (!container.classList.contains('yos-dblclick-bound')) {
-                container.classList.add('yos-dblclick-bound');
-                container.addEventListener('dblclick', function() {
-                    if (trailerId !== "") {
-                        console.log("[YOS-SYNC] 🖱️ Doppio Clic Rilevato: " + trailerId);
-                        GM_setValue('yos_last_clicked_trailer', trailerId);
-
-                        let queueStr = GM_getValue('cons_priority_queue', "[]");
-                        let queue = [];
-                        try { queue = JSON.parse(queueStr); } catch(e){}
-                        
-                        queue = queue.filter(id => id !== trailerId); // Rimuove eventuali doppioni
-                        queue.unshift(trailerId); // Inserisce IN CIMA
-                        
-                        GM_setValue('cons_priority_queue', JSON.stringify(queue));
-                    }
-                });
-            }
-
-            // LOGICA COLORI E COLLI YOS V1.6
+            // LOGICA COLORI E COLLI YOS 
             let targetText = "X";
             let targetBg = "rgba(0, 0, 0, 0.6)";
             let targetColor = "white";
@@ -839,13 +754,15 @@
                 }
             } 
 
-            // Applica stili visivi in modo sicuro (non distrugge i nodi figli, esattamente come V1.6)
-            if (statusSpan && statusSpan.innerText !== targetText) statusSpan.innerText = targetText;
+            // Applica stili visivi se cambiati
+            if (customInfo.innerText.split('\n')[0] !== targetText) {
+                customInfo.innerText = targetText;
+                if (pieceBadge) customInfo.appendChild(pieceBadge);
+            }
             if (customInfo.style.backgroundColor !== targetBg) customInfo.style.backgroundColor = targetBg;
             if (customInfo.style.color !== targetColor) customInfo.style.color = targetColor;
             if (customInfo.style.border !== targetBorder) customInfo.style.border = targetBorder;
 
-            // Mostra o nascondi il badge dei colli
             if (totalPieces > 0 && pieceBadge) {
                 if (pieceBadge.innerText !== totalPieces + " pz") pieceBadge.innerText = totalPieces + " pz";
                 if (pieceBadge.style.display !== "block") pieceBadge.style.display = "block";
@@ -853,9 +770,6 @@
                 if (pieceBadge.style.display !== "none") pieceBadge.style.display = "none";
             }
         });
-
-        // Memorizza le casse blu correnti per le fasi 2 e 3
-        GM_setValue('yos_blue_trailers', JSON.stringify(currentBlueTrailers));
     }
 
     // ==========================================
