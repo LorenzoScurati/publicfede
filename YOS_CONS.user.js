@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V1.5
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  Single Check Fixato (No Reset preventivo). Posizione Colli Incollata. Reset Filter Finale.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
@@ -692,6 +692,7 @@
                 
                 container.appendChild(customInfo);
 
+                // Badge dei colli come FIGLIO dell'icona (Risolve la sovrapposizione)
                 let pieceBadge = document.createElement('div');
                 pieceBadge.className = 'yos-piece-count-badge';
                 customInfo.appendChild(pieceBadge); 
@@ -756,6 +757,7 @@
 
             // Applica stili visivi se cambiati
             if (customInfo.innerText.split('\n')[0] !== targetText) {
+                // Preserviamo il div pieceBadge quando aggiorniamo il testo
                 customInfo.innerText = targetText;
                 if (pieceBadge) customInfo.appendChild(pieceBadge);
             }
