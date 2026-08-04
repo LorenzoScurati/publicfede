@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.2
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.7
 // @namespace    http://tampermonkey.net/
-// @version      2.2
-// @description  Fix Injection Loop: Tracking esatto della targa cliccata e pulizia DOM.
+// @version      2.7
+// @description  Bulk in viola in coda. I Bulk sono esclusi dal calcolo conflitti (Rosso/Giallo).
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -30,6 +30,31 @@
 
     let activeTrailers = {};
     let tempCycleTrailers = {};
+
+    // ==========================================
+    // DIZIONARIO FEDEX -> TNT (Per Origine e Destinazione)
+    // ==========================================
+    const fedexToTntMap = {
+        "CDGT9": "06A", "AOIP": "AN6", "AOTT8": "AOT", "ATHA": "ATH+", "BRIP": "BA5",
+        "BCNA": "BCN", "BCNB": "BCN", "QNOA": "BEA", "GBNA": "BO1", "BLQP": "BO2",
+        "TARA": "BRG", "BZQA": "BZQ", "CUFT8": "CUF", "DTZT": "DFT", "DUSC": "DNG",
+        "DUSA": "DUS+RGL", "QCZA": "RMZ", "ZIPH": "FCS", "ZIQH": "FIA", "GOAA": "GOA",
+        "HAJA": "HNJ", "ZIAT7": "IBD", "DCIA": "IBU", "FIRA": "ICM", "FRLA": "IIM",
+        "IPRA": "ILJ", "ISHA": "IOE", "ISRA": "IPO", "LTZA": "ISV", "QQKH": "KG4",
+        "LUGA": "LUG", "LYSA": "LYS", "MADA": "MAD+", "MADC": "MAD+", "QAQA": "MDA",
+        "MILT7": "MIL", "ZMIA": "MM1D", "ZIEA": "MM1I", "MRST8": "MRS", "STXA": "MV9",
+        "MXPA": "MXPE", "MXPB": "MXPI", "ZJYH": "NT3", "SUFA": "OS3",
+        "QCLA": "OSO", "ZMFH": "PD2", "PMFT8": "PMF", "PSAT8": "PSA", "QALA": "QAL",
+        "QARA": "QAR", "QARH": "QAR", "QPAA": "QPA", "QPZT8": "QPZ", "QVAT7": "QVA",
+        "QZRT8": "QZR", "RANA": "REM", "QEAA": "RNV", "ROMT7": "ROM", "SKGA": "SKG",
+        "XIKA": "TO1", "XNCA": "TV1", "VBSA": "VBS", "VBST7": "VBS", "XRLA": "VE1",
+        "VNZT7": "VNZ", "VRNA": "VRN", "XVYA": "ZD1", "ZRHA": "ZRH", "ZCBA": "Z8C"
+    };
+
+    function translateLocID(code) {
+        if (!code) return '-';
+        return fedexToTntMap[code.toUpperCase()] || code.toUpperCase();
+    }
 
     // ==========================================
     // STILI CSS
@@ -312,6 +337,28 @@
     // ==========================================
     // ESECUZIONE SINGOLO CHECK (PRIORITÀ)
     // ==========================================
+    function finalizeSingleCheck(targetId, newRecords) {
+        activeTrailers[targetId] = newRecords;
+        GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
+        GM_setValue('cons_last_heartbeat', Date.now());
+
+        deepClearFilters();
+        setTimeout(() => {
+            const refreshBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
+            if (refreshBtn) forceAggressiveClick(refreshBtn);
+
+            setTimeout(() => {
+                isProcessingCommand = false;
+                lastClickTime = Date.now();
+                if (!isAutoScanActive && dbCooldownSeconds <= 0 && completedSweeps >= 2) {
+                    GM_setValue('cons_scan_state', 'COMPLETED');
+                } else {
+                    GM_setValue('cons_scan_state', 'RUNNING');
+                }
+            }, 1000);
+        }, 500);
+    }
+
     function processSingleCheckQueue() {
         if (!GM_getValue('cons_initial_scan_done', false)) return false;
         if (isProcessingCommand) return true;
@@ -325,7 +372,7 @@
         let targetId = queue.shift();
         GM_setValue('cons_single_check_queue', JSON.stringify(queue));
 
-        console.log(`[YOS-SYNC] 🔍 SINGLE CHECK avviato per Trailer: ${targetId}`);
+        console.log(`[YOS-SYNC] 🔍 SINGLE CHECK FASE 1: Avviato per Trailer: ${targetId}`);
         isProcessingCommand = true;
         GM_setValue('cons_scan_state', 'SINGLE_CHECK');
 
@@ -358,6 +405,8 @@
 
                     setTimeout(() => {
                         let newRecords = [];
+                        let targetDestRaw = null;
+
                         const rows = document.querySelectorAll('tbody tr');
                         rows.forEach(row => {
                             const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
@@ -376,11 +425,17 @@
                             const assetIdNode = row.querySelector('td.mat-column-assetId');
                             const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
-                            const originNode = row.querySelector('td.mat-column-origin') || row.querySelector('td.mat-column-originLocCd');
-                            const origin = originNode ? originNode.innerText.trim() : '';
+                            const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
+                            const rawOrigin = originNode ? originNode.innerText.trim() : '';
+                            const origin = translateLocID(rawOrigin);
 
-                            const destNode = row.querySelector('td.mat-column-destination') || row.querySelector('td.mat-column-destLocCd');
-                            const destination = destNode ? destNode.innerText.trim() : '';
+                            const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
+                            const rawDest = destNode ? destNode.innerText.trim() : '';
+                            const destination = translateLocID(rawDest);
+
+                            if (!targetDestRaw && rawDest !== '') {
+                                targetDestRaw = rawDest;
+                            }
 
                             const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
                             const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
@@ -399,24 +454,98 @@
                             }
                         });
 
-                        activeTrailers[targetId] = newRecords;
-                        GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
-                        GM_setValue('cons_last_heartbeat', Date.now());
+                        if (targetDestRaw) {
+                            console.log(`[YOS-SYNC] 🔍 SINGLE CHECK FASE 2: Cerco Bulk/Bag (OTHER) per la destinazione ${targetDestRaw}`);
+                            deepClearFilters();
 
-                        deepClearFilters();
-                        setTimeout(() => {
-                            forceAggressiveClick(refreshBtn);
                             setTimeout(() => {
-                                isProcessingCommand = false;
-                                lastClickTime = Date.now();
-
-                                if (!isAutoScanActive && dbCooldownSeconds <= 0 && completedSweeps >= 2) {
-                                    GM_setValue('cons_scan_state', 'COMPLETED');
-                                } else {
-                                    GM_setValue('cons_scan_state', 'RUNNING');
+                                let destInput = Array.from(document.querySelectorAll('input')).find(i => i.getAttribute('formcontrolname') === 'destinationLocCd' || (i.placeholder && i.placeholder.includes('Destination')));
+                                if (destInput) {
+                                    destInput.value = targetDestRaw;
+                                    destInput.dispatchEvent(new Event('input', {bubbles: true}));
+                                    destInput.dispatchEvent(new Event('change', {bubbles: true}));
                                 }
-                            }, 1000);
-                        }, 500);
+
+                                const unitSelect = document.querySelector('mat-select[formcontrolname="unitType"]');
+                                if (unitSelect && !unitSelect.disabled) {
+                                    forceAggressiveClick(unitSelect);
+
+                                    setTimeout(() => {
+                                        clickOptionByText('OTHER');
+
+                                        setTimeout(() => {
+                                            const refreshBtn2 = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
+                                            forceAggressiveClick(refreshBtn2);
+
+                                            setTimeout(() => {
+                                                const viewBtns2 = document.querySelectorAll('button[title="Click to view piece count"]');
+                                                viewBtns2.forEach(btn => forceAggressiveClick(btn));
+
+                                                const refreshPieceBtns2 = document.querySelectorAll('.piece-count-refresh');
+                                                refreshPieceBtns2.forEach(btn => {
+                                                    forceAggressiveClick(btn);
+                                                    const parent = btn.closest('button') || btn.parentElement;
+                                                    if(parent) forceAggressiveClick(parent);
+                                                });
+
+                                                setTimeout(() => {
+                                                    const rows2 = document.querySelectorAll('tbody tr');
+                                                    rows2.forEach(row => {
+                                                        const stateNode = row.querySelector('td.mat-column-positionState');
+                                                        const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
+                                                        if (state === 'ABANDONED') return;
+
+                                                        const unitTypeNode = row.querySelector('td.mat-column-unitType');
+                                                        const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
+                                                        if (unitType !== 'OTHER') return;
+
+                                                        const consIdNode = row.querySelector('td.mat-column-consId');
+                                                        const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
+
+                                                        const assetIdNode = row.querySelector('td.mat-column-assetId');
+                                                        const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
+
+                                                        const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
+                                                        const rawOrigin2 = originNode ? originNode.innerText.trim() : '';
+                                                        const origin = translateLocID(rawOrigin2);
+
+                                                        const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
+                                                        const rawDest2 = destNode ? destNode.innerText.trim() : '';
+                                                        const destination = translateLocID(rawDest2);
+
+                                                        const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
+                                                        const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
+
+                                                        const closeNode = row.querySelector('td.mat-column-closeDate') || row.querySelector('td.mat-column-closeDt');
+                                                        const closeDate = closeNode ? closeNode.innerText.trim().replace(/\n/g, ' ') : '';
+
+                                                        let pieceCount = 0;
+                                                        const pieceSpan = row.querySelector('.piece-count');
+                                                        if (pieceSpan) {
+                                                            pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
+                                                        }
+
+                                                        if (consId !== '') {
+                                                            if (!newRecords.some(r => r.consId === consId)) {
+                                                                newRecords.push({ state, assetId, unitType, pieceCount, consId, origin, destination, openDate, closeDate });
+                                                            }
+                                                        }
+                                                    });
+
+                                                    finalizeSingleCheck(targetId, newRecords);
+
+                                                }, 3500);
+                                            }, 2000);
+                                        }, 500);
+                                    }, 500);
+                                } else {
+                                    finalizeSingleCheck(targetId, newRecords);
+                                }
+                            }, 500);
+                        } else {
+                            finalizeSingleCheck(targetId, newRecords);
+                        }
+
                     }, 3500);
                 }, 2000);
             }, 500);
@@ -509,11 +638,13 @@
                 const assetIdNode = row.querySelector('td.mat-column-assetId');
                 const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
 
-                const originNode = row.querySelector('td.mat-column-origin') || row.querySelector('td.mat-column-originLocCd');
-                const origin = originNode ? originNode.innerText.trim() : '';
+                const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
+                const rawOrigin = originNode ? originNode.innerText.trim() : '';
+                const origin = translateLocID(rawOrigin);
 
-                const destNode = row.querySelector('td.mat-column-destination') || row.querySelector('td.mat-column-destLocCd');
-                const destination = destNode ? destNode.innerText.trim() : '';
+                const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
+                const rawDest = destNode ? destNode.innerText.trim() : '';
+                const destination = translateLocID(rawDest);
 
                 const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
                 const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
@@ -662,14 +793,12 @@
     }
 
     // ==========================================
-    // V2.2: FIX INJECTION LOOP E TRACKING CLICK
+    // INIEZIONE MODALE YOS
     // ==========================================
     function injectIntoYosModal() {
         const remarksContainer = document.querySelector('.door-info__movmt-history');
         if (!remarksContainer) return;
 
-        // V2.2: DISTRUGGIAMO VECCHIE TABELLE PRIMA DI LEGGERE IL TESTO DELLA MODALE!
-        // Questo impedisce allo script di leggere il Trailer ID dalla sua stessa iniezione precedente
         const staleInjections = document.querySelectorAll('.tnt-cons-modal-injection');
         staleInjections.forEach(el => el.remove());
 
@@ -686,11 +815,9 @@
         let foundTrailerId = null;
         let lastClicked = GM_getValue('yos_last_clicked_trailer', '');
 
-        // Priorità Massima: Usiamo la targa salvata nell'ultimo clic dell'operatore
         if (lastClicked && modalText.includes(lastClicked)) {
             foundTrailerId = lastClicked;
         } else {
-            // Seleziona la prima targa che trova come parola intera
             const trailerIds = Object.keys(currentConsTrailers).sort((a,b) => b.length - a.length);
             for (let tId of trailerIds) {
                 let regex = new RegExp("\\b" + tId + "\\b");
@@ -718,7 +845,6 @@
         let triggerTime = parseInt(remarksContainer.dataset.autoCheckTriggered);
         let currentHeartbeat = parseInt(lastHeartbeat);
 
-        // È in caricamento se il check non è finito O se lo scanner sta ancora facendo il giro 1
         let isLoading = !isInitialScanDone || (currentHeartbeat <= triggerTime);
 
         let tableHTML = '';
@@ -748,13 +874,13 @@
             tableHTML = `
                 <div class="tnt-cons-modal-injection" data-heartbeat="${lastHeartbeat}" data-loading="false" data-initial="${isInitialScanDone}" style="margin-top: 20px; border-top: 1px solid #ff9800; padding-top: 10px; width: 100%;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <strong style="color: #ff9800; font-size: 14px;">🚚 DATI CONS LIVE (${foundTrailerId})</strong>
+                        <strong style="color: #ff9800; font-size: 14px;">🚚 DATI CONS LIVE E BULK (${foundTrailerId})</strong>
                         <span style="color: #bbb; font-size: 11px;">Ultimo aggiornamento: <b style="color: #fff">${timeStr}</b></span>
                     </div>
                     <div style="overflow-x: auto;">
-                        <table style="width: 100%; color: #ff9800; font-size: 12px; border-collapse: collapse; text-align: left; font-family: Roboto, sans-serif;">
+                        <table style="width: 100%; font-size: 12px; border-collapse: collapse; text-align: left; font-family: Roboto, sans-serif;">
                             <thead>
-                                <tr style="border-bottom: 2px solid #ff9800;">
+                                <tr style="border-bottom: 2px solid #ff9800; color: #ff9800;">
                                     <th style="padding: 6px;">CONS ID</th>
                                     <th style="padding: 6px;">ASSET ID</th>
                                     <th style="padding: 6px;">UNIT TYPE</th>
@@ -769,9 +895,13 @@
                             <tbody>
             `;
 
-            records.forEach(r => {
+            // SEPARAZIONE E COLORE (Trailer in Arancione, Bulk in Viola)
+            const trailers = records.filter(r => r.unitType === 'TRAILER');
+            const bulks = records.filter(r => r.unitType !== 'TRAILER');
+
+            trailers.forEach(r => {
                 tableHTML += `
-                    <tr style="border-bottom: 1px dotted rgba(255, 152, 0, 0.4);">
+                    <tr style="border-bottom: 1px dotted rgba(255, 152, 0, 0.4); color: #ff9800;">
                         <td style="padding: 6px; font-weight: bold;">${r.consId}</td>
                         <td style="padding: 6px;">${r.assetId}</td>
                         <td style="padding: 6px;">${r.unitType}</td>
@@ -781,6 +911,22 @@
                         <td style="padding: 6px;">${r.openDate || '-'}</td>
                         <td style="padding: 6px;">${r.closeDate || '-'}</td>
                         <td style="padding: 6px; font-weight: bold; color: #fff; background-color: rgba(255, 152, 0, 0.2); text-align: center;">${r.pieceCount}</td>
+                    </tr>
+                `;
+            });
+
+            bulks.forEach(r => {
+                tableHTML += `
+                    <tr style="border-bottom: 1px dotted rgba(199, 125, 255, 0.4); color: #c77dff;">
+                        <td style="padding: 6px; font-weight: bold;">${r.consId}</td>
+                        <td style="padding: 6px;">${r.assetId}</td>
+                        <td style="padding: 6px;">${r.unitType}</td>
+                        <td style="padding: 6px;">${r.state}</td>
+                        <td style="padding: 6px;">${r.origin || '-'}</td>
+                        <td style="padding: 6px;">${r.destination || '-'}</td>
+                        <td style="padding: 6px;">${r.openDate || '-'}</td>
+                        <td style="padding: 6px;">${r.closeDate || '-'}</td>
+                        <td style="padding: 6px; font-weight: bold; color: #fff; background-color: rgba(199, 125, 255, 0.2); text-align: center;">${r.pieceCount}</td>
                     </tr>
                 `;
             });
@@ -795,6 +941,9 @@
         targetRow.appendChild(injectionDiv.firstElementChild);
     }
 
+    // ==========================================
+    // INIEZIONE BADGE CONTAINER E LOGICA CONFLITTI
+    // ==========================================
     function injectIntoYosContainers() {
         const containers = document.querySelectorAll('div[id^="container_"]');
         if (containers.length === 0) return;
@@ -832,7 +981,6 @@
                 if (nameDiv) trailerId = nameDiv.innerText.trim().toUpperCase();
             }
 
-            // V2.2 Tracking Clic Singolo e Doppio per salvare la targa in memoria sicura
             if (!container.dataset.clickTrackerBound) {
                 container.dataset.clickTrackerBound = "true";
 
@@ -916,27 +1064,38 @@
                 const records = currentConsTrailers[trailerId];
 
                 if (records.length > 0) {
+                    // V2.7 FIX LOGICA CONFLITTI: ISOLARE I BULK
                     const trailers = records.filter(r => r.unitType === 'TRAILER');
-                    const bulks = records.filter(r => r.unitType === 'OTHER' || r.unitType === 'BAG');
+                    const bulks = records.filter(r => r.unitType !== 'TRAILER');
 
                     totalPieces = records.reduce((acc, r) => acc + (r.pieceCount || 0), 0);
-                    let activeConsWithPieces = records.filter(r => (r.pieceCount || 0) > 0).length;
 
+                    // Conta i pezzi SOLO DENTRO I TRAILER per calcolare i conflitti rossi/gialli
+                    let activeTrailersWithPieces = trailers.filter(r => (r.pieceCount || 0) > 0).length;
+
+                    // Semaforo Icona: Guarda SOLO i trailer. Se non ci sono trailer, mostra un "?" viola per indicare solo i Bulk.
                     if (trailers.length > 1) {
                         targetText = "!"; targetBg = "rgba(220, 53, 69, 0.9)"; targetColor = "white";
-                    } else if (bulks.length > 0) {
-                        targetText = "?"; targetBg = "rgba(255, 193, 7, 0.9)"; targetColor = "black";
                     } else if (trailers.length === 1) {
                         targetText = "✅"; targetBg = "rgba(40, 167, 69, 0.9)"; targetColor = "white";
+                    } else if (bulks.length > 0) {
+                        targetText = "?"; targetBg = "rgba(199, 125, 255, 0.9)"; targetColor = "white";
                     }
 
-                    if (records.length === 1) {
+                    // Badge Colli Intelligente: Il trigger conflitti guarda SOLO trailers.length
+                    if (trailers.length <= 1) {
                         if (totalPieces > 0) {
                             showBadge = true;
                             badgeText = totalPieces + " pz";
+                            if (trailers.length === 0) {
+                                // Se la porta ha ZERO trailer ma ha dei Bulk associati, coloriamo il numero di viola
+                                badgeColor = "#c77dff";
+                                badgeBorder = "1px solid #c77dff";
+                                badgeBoxShadow = "0 0 5px rgba(199, 125, 255, 0.5)";
+                            }
                         }
-                    } else if (records.length > 1) {
-                        if (activeConsWithPieces <= 1) {
+                    } else if (trailers.length > 1) {
+                        if (activeTrailersWithPieces <= 1) {
                             if (totalPieces > 0) {
                                 showBadge = true;
                                 badgeText = totalPieces + " pz";
