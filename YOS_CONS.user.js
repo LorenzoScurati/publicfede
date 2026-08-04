@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.7
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.8
 // @namespace    http://tampermonkey.net/
-// @version      2.7
-// @description  Bulk in viola in coda. I Bulk sono esclusi dal calcolo conflitti (Rosso/Giallo).
+// @version      2.8
+// @description  Fix Mappa: Nessuna somma colli, mostra SOLO il numero dell'ultima CONS non abbandonata.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -792,9 +792,6 @@
         }
     }
 
-    // ==========================================
-    // INIEZIONE MODALE YOS
-    // ==========================================
     function injectIntoYosModal() {
         const remarksContainer = document.querySelector('.door-info__movmt-history');
         if (!remarksContainer) return;
@@ -895,9 +892,9 @@
                             <tbody>
             `;
 
-            // SEPARAZIONE E COLORE (Trailer in Arancione, Bulk in Viola)
-            const trailers = records.filter(r => r.unitType === 'TRAILER');
-            const bulks = records.filter(r => r.unitType !== 'TRAILER');
+            // Ordiniamo in modo che i più nuovi siano in alto in entrambe le categorie
+            const trailers = records.filter(r => r.unitType === 'TRAILER').sort((a, b) => Number(b.consId) - Number(a.consId));
+            const bulks = records.filter(r => r.unitType !== 'TRAILER').sort((a, b) => Number(b.consId) - Number(a.consId));
 
             trailers.forEach(r => {
                 tableHTML += `
@@ -941,9 +938,6 @@
         targetRow.appendChild(injectionDiv.firstElementChild);
     }
 
-    // ==========================================
-    // INIEZIONE BADGE CONTAINER E LOGICA CONFLITTI
-    // ==========================================
     function injectIntoYosContainers() {
         const containers = document.querySelectorAll('div[id^="container_"]');
         if (containers.length === 0) return;
@@ -1064,16 +1058,19 @@
                 const records = currentConsTrailers[trailerId];
 
                 if (records.length > 0) {
-                    // V2.7 FIX LOGICA CONFLITTI: ISOLARE I BULK
                     const trailers = records.filter(r => r.unitType === 'TRAILER');
                     const bulks = records.filter(r => r.unitType !== 'TRAILER');
 
-                    totalPieces = records.reduce((acc, r) => acc + (r.pieceCount || 0), 0);
+                    // V2.8 FIX: Nessuna somma. Prendiamo solo i colli della CONS più recente.
+                    // Ordiniamo per consId decrescente (il più alto è il più nuovo).
+                    const sortedRecords = [...records].sort((a, b) => Number(b.consId) - Number(a.consId));
 
-                    // Conta i pezzi SOLO DENTRO I TRAILER per calcolare i conflitti rossi/gialli
+                    // Diamo la priorità all'ultimo TRAILER inserito. Se c'è solo BULK, usiamo l'ultimo BULK.
+                    const ultimaCons = sortedRecords.find(r => r.unitType === 'TRAILER') || sortedRecords[0];
+                    totalPieces = ultimaCons ? (ultimaCons.pieceCount || 0) : 0;
+
                     let activeTrailersWithPieces = trailers.filter(r => (r.pieceCount || 0) > 0).length;
 
-                    // Semaforo Icona: Guarda SOLO i trailer. Se non ci sono trailer, mostra un "?" viola per indicare solo i Bulk.
                     if (trailers.length > 1) {
                         targetText = "!"; targetBg = "rgba(220, 53, 69, 0.9)"; targetColor = "white";
                     } else if (trailers.length === 1) {
@@ -1082,13 +1079,11 @@
                         targetText = "?"; targetBg = "rgba(199, 125, 255, 0.9)"; targetColor = "white";
                     }
 
-                    // Badge Colli Intelligente: Il trigger conflitti guarda SOLO trailers.length
                     if (trailers.length <= 1) {
                         if (totalPieces > 0) {
                             showBadge = true;
                             badgeText = totalPieces + " pz";
                             if (trailers.length === 0) {
-                                // Se la porta ha ZERO trailer ma ha dei Bulk associati, coloriamo il numero di viola
                                 badgeColor = "#c77dff";
                                 badgeBorder = "1px solid #c77dff";
                                 badgeBoxShadow = "0 0 5px rgba(199, 125, 255, 0.5)";
