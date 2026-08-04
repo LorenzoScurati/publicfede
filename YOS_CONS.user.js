@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.9.4
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.9.5
 // @namespace    http://tampermonkey.net/
-// @version      2.9.4
-// @description  Double check Colli su Single Check (+800ms), Delay extra su Auto-scan per pagine vuote (+500ms).
+// @version      2.9.5
+// @description  Audio Wake Lock (Background), Double check Colli esteso (2.5s).
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -24,7 +24,7 @@
 
     let isInitializing = true;
     let hasInitializedFilters = false;
-    let initCountdown = 3;
+    let initCountdown = 3; 
 
     let completedSweeps = 0;
 
@@ -186,6 +186,32 @@
     }
 
     // ==========================================
+    // HACK: AUDIO WAKE LOCK (Anti-Throttling Background)
+    // ==========================================
+    let isAudioPlaying = false;
+    function enableAudioWakeLock() {
+        if (isAudioPlaying) return;
+        if (!document.title.includes('CONS Maintenance')) return;
+
+        try {
+            // Traccia WAV silente generata in Base64 (pochi byte)
+            const silentAudioUrl = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+            const audio = new Audio(silentAudioUrl);
+            audio.loop = true;
+            audio.play().then(() => {
+                isAudioPlaying = true;
+                console.log('[YOS-SYNC] 🎵 Audio Wake Lock ATTIVO: La tab è forzata ad alta priorità in background.');
+            }).catch(e => {
+                console.warn('[YOS-SYNC] 🔇 Autoplay bloccato. Fai un clic sulla pagina CONS per attivare l\'anti-throttling.');
+            });
+        } catch (e) {}
+    }
+
+    // Il browser blocca l'audio automatico, quindi lo accendiamo al primo clic sulla pagina
+    document.addEventListener('click', enableAudioWakeLock, { once: true });
+
+
+    // ==========================================
     // UI: CONS MAINTENANCE
     // ==========================================
     function injectConsDashboard() {
@@ -201,6 +227,7 @@
             manualBtn.className = 'cons-dash-btn';
             manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
             manualBtn.onclick = () => {
+                enableAudioWakeLock(); // Clic sul bottone conta per l'audio lock!
                 isManualModeActive = !isManualModeActive;
                 const autoBtn = document.getElementById('tnt-cons-autoscan-btn');
                 if (isManualModeActive) {
@@ -223,6 +250,8 @@
             autoBtn.className = 'cons-dash-btn';
             autoBtn.innerHTML = '🔄 Auto-Scan: ON';
             autoBtn.onclick = () => {
+                enableAudioWakeLock(); // Clic sul bottone conta per l'audio lock!
+                
                 if (isManualModeActive) {
                     isManualModeActive = false;
                     manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
@@ -381,10 +410,10 @@
             setTimeout(() => {
                 isProcessingCommand = false;
                 lastClickTime = Date.now();
-
+                
                 isAutoScanActive = false;
                 GM_setValue('cons_scan_state', 'PAUSED_POST_CHECK');
-
+                
                 const autoBtn = document.getElementById('tnt-cons-autoscan-btn');
                 if (autoBtn) {
                     autoBtn.innerHTML = '⏸️ Auto-Scan: PAUSA (Post-Check)';
@@ -397,9 +426,9 @@
     function processSingleCheckQueue() {
         if (!GM_getValue('cons_initial_scan_done', false)) return false;
         if (isProcessingCommand) return true;
-
+        
         if (isManualModeActive) {
-            GM_setValue('cons_single_check_queue', '[]');
+            GM_setValue('cons_single_check_queue', '[]'); 
             return false;
         }
 
@@ -443,9 +472,9 @@
                         if(parent) forceAggressiveClick(parent);
                     });
 
-                    // FASE 1 - ESTRAZIONE (Con Double Check per i colli)
+                    // FASE 1 - ESTRAZIONE (Con Double Check Esteso)
                     setTimeout(() => {
-
+                        
                         const executeFase1 = (isRetry) => {
                             let newRecords = [];
                             let targetDestRaw = null;
@@ -464,7 +493,7 @@
 
                                 const stateNode = row.querySelector('td.mat-column-positionState');
                                 const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
-
+                                
                                 if (state === 'ABANDONED') return;
 
                                 const consIdNode = row.querySelector('td.mat-column-consId');
@@ -495,6 +524,7 @@
                                 }
 
                                 if (consId !== '') {
+                                    // Se siamo nel primo tentativo e i colli sono vuoti/zero, forziamo il retry
                                     if (pieceCount === 0 && !isRetry) {
                                         needsRetryForPieces = true;
                                     }
@@ -503,8 +533,8 @@
                             });
 
                             if (needsRetryForPieces) {
-                                console.log(`[YOS-SYNC] ⚠️ Colli a 0, eseguo Double Check rapido (800ms)...`);
-                                setTimeout(() => executeFase1(true), 800);
+                                console.log(`[YOS-SYNC] ⚠️ Colli vuoti, attesa extra per caricamento FedEx (2.5 sec)...`);
+                                setTimeout(() => executeFase1(true), 2500); // 2.5 SECONDI EXTRA
                                 return;
                             }
 
@@ -589,24 +619,24 @@
 
                                                         finalizeSingleCheck(targetId, newRecords);
 
-                                                    }, 3000);
-                                                }, 2000);
-                                            }, 500);
-                                        }, 500);
+                                                    }, 3000); 
+                                                }, 2000); 
+                                            }, 500); 
+                                        }, 500); 
                                     } else {
                                         finalizeSingleCheck(targetId, newRecords);
                                     }
-                                }, 1000);
+                                }, 1000); 
                             } else {
                                 finalizeSingleCheck(targetId, newRecords);
                             }
                         };
 
-                        executeFase1(false); // Avvia Fase 1
+                        executeFase1(false);
 
-                    }, 3000);
-                }, 2000);
-            }, 1500);
+                    }, 3000); 
+                }, 2000); 
+            }, 1500); 
         }, 800);
 
         return true;
@@ -617,7 +647,7 @@
     // ==========================================
     function checkPendingCommands() {
         if (isProcessingCommand) return true;
-
+        
         if (isManualModeActive) {
             GM_setValue('cons_pending_hours_command', null);
             GM_setValue('cons_pending_unittype_command', null);
@@ -669,10 +699,10 @@
         injectConsDashboard();
 
         if (isInitializing) { runSetupSequence(); return; }
-
+        
         if (isManualModeActive) {
             GM_setValue('cons_single_check_queue', '[]');
-            return;
+            return; 
         }
 
         if (processSingleCheckQueue()) return;
@@ -681,13 +711,12 @@
 
         const loader = document.querySelector('mat-progress-spinner, .loader');
         if (loader && loader.offsetHeight > 0) return;
-
-        // Controllo se ci sono asset nella pagina per eventuale ritardo extra (+500ms)
+        
         const rowsCheck = document.querySelectorAll('tbody tr');
         let hasAssets = Array.from(rowsCheck).some(r => r.querySelector('td.mat-column-trailerAssetId'));
-        let targetDelay = hasAssets ? 800 : 1300; // 800ms standard, 1300ms se non trova targe
+        let targetDelay = hasAssets ? 800 : 1300; 
 
-        if (Date.now() - lastClickTime < targetDelay) return;
+        if (Date.now() - lastClickTime < targetDelay) return; 
 
         const prevBtn = document.querySelector('button[aria-label="Previous page"]');
         const nextBtn = document.querySelector('button[aria-label="Next page"]');
@@ -948,7 +977,7 @@
             `;
         } else {
             const records = currentConsTrailers[foundTrailerId] || [];
-
+            
             let d = new Date(currentHeartbeat);
             let timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + ':' + d.getSeconds().toString().padStart(2, '0');
 
@@ -1020,7 +1049,7 @@
 
                 tableHTML += `</tbody></table></div>`;
             }
-
+            
             tableHTML += `</div>`;
         }
 
