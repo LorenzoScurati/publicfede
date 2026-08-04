@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.8
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.9.4
 // @namespace    http://tampermonkey.net/
-// @version      2.8
-// @description  Fix Mappa: Nessuna somma colli, mostra SOLO il numero dell'ultima CONS non abbandonata.
+// @version      2.9.4
+// @description  Double check Colli su Single Check (+800ms), Delay extra su Auto-scan per pagine vuote (+500ms).
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -16,6 +16,7 @@
     'use strict';
 
     let isAutoScanActive = true;
+    let isManualModeActive = false;
     let isRewinding = false;
     let lastClickTime = 0;
 
@@ -23,9 +24,8 @@
 
     let isInitializing = true;
     let hasInitializedFilters = false;
-    let initCountdown = 10;
+    let initCountdown = 3;
 
-    let dbCooldownSeconds = 120;
     let completedSweeps = 0;
 
     let activeTrailers = {};
@@ -88,17 +88,21 @@
             display: flex; flex-direction: column; gap: 8px;
             font-family: Roboto, sans-serif; font-size: 13px; font-weight: bold;
         }
-        #tnt-cons-autoscan-btn {
-            padding: 10px 20px; border-radius: 5px; background: #28a745; color: white;
+        .cons-dash-btn {
+            padding: 10px 20px; border-radius: 5px; color: white;
             font-weight: bold; border: 1px solid rgba(255,255,255,0.2); cursor: pointer;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: background 0.2s;
         }
+        #tnt-cons-autoscan-btn { background: #28a745; }
+        #tnt-cons-manual-btn { background: #6c757d; }
+
         .cons-info-box {
             padding: 8px 15px; border-radius: 5px; background: #1e1e1e; color: #e3e3e3;
             border: 1px solid #444; box-shadow: 0 4px 10px rgba(0,0,0,0.5); text-align: center;
         }
         .text-warning { color: #ffc107; }
         .text-ready { color: #00bcd4; }
+        .text-danger { color: #dc3545; }
 
         #tnt-yos-bottom-container {
             position: fixed; bottom: 20px; right: 20px; z-index: 999999;
@@ -176,6 +180,11 @@
         });
     }
 
+    function formatShortDate(dateStr) {
+        if (!dateStr || dateStr === '-') return '-';
+        return dateStr.replace(/[-/]?20\d{2}/g, '').trim();
+    }
+
     // ==========================================
     // UI: CONS MAINTENANCE
     // ==========================================
@@ -187,13 +196,42 @@
             dashboard = document.createElement('div');
             dashboard.id = 'tnt-cons-dashboard';
 
-            const btn = document.createElement('button');
-            btn.id = 'tnt-cons-autoscan-btn';
-            btn.innerHTML = '🔄 Auto-Scan: ON';
-            btn.onclick = () => {
-                if (!isAutoScanActive && dbCooldownSeconds <= 0 && completedSweeps >= 2) {
-                    btn.innerHTML = '⏳ Riavvio in corso...';
-                    btn.style.background = '#ffc107';
+            const manualBtn = document.createElement('button');
+            manualBtn.id = 'tnt-cons-manual-btn';
+            manualBtn.className = 'cons-dash-btn';
+            manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
+            manualBtn.onclick = () => {
+                isManualModeActive = !isManualModeActive;
+                const autoBtn = document.getElementById('tnt-cons-autoscan-btn');
+                if (isManualModeActive) {
+                    manualBtn.innerHTML = '🛠️ Lavoro Manuale: ON';
+                    manualBtn.style.background = '#dc3545';
+                    isAutoScanActive = false;
+                    if(autoBtn) { autoBtn.innerHTML = '⏸️ Auto-Scan: BLOCCATO'; autoBtn.style.background = '#6c757d'; }
+                    GM_setValue('cons_scan_state', 'MANUAL_MODE');
+                    GM_setValue('cons_single_check_queue', '[]');
+                } else {
+                    manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
+                    manualBtn.style.background = '#6c757d';
+                    GM_setValue('cons_scan_state', 'PAUSED');
+                    if(autoBtn) { autoBtn.innerHTML = '⏸️ Auto-Scan: PAUSA'; autoBtn.style.background = '#ff9800'; }
+                }
+            };
+
+            const autoBtn = document.createElement('button');
+            autoBtn.id = 'tnt-cons-autoscan-btn';
+            autoBtn.className = 'cons-dash-btn';
+            autoBtn.innerHTML = '🔄 Auto-Scan: ON';
+            autoBtn.onclick = () => {
+                if (isManualModeActive) {
+                    isManualModeActive = false;
+                    manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
+                    manualBtn.style.background = '#6c757d';
+                }
+
+                if (!isAutoScanActive && completedSweeps >= 2) {
+                    autoBtn.innerHTML = '⏳ Riavvio in corso...';
+                    autoBtn.style.background = '#ffc107';
                     GM_setValue('cons_active_trailers', '{}');
                     GM_setValue('cons_initial_scan_done', false);
                     deepClearFilters();
@@ -203,13 +241,14 @@
 
                 isAutoScanActive = !isAutoScanActive;
                 if (isAutoScanActive) {
-                    btn.innerHTML = '🔄 Auto-Scan: ON';
-                    btn.style.background = '#28a745';
+                    autoBtn.innerHTML = '🔄 Auto-Scan: ON';
+                    autoBtn.style.background = '#28a745';
                     GM_setValue('cons_scan_state', 'RUNNING');
                 } else {
-                    btn.innerHTML = '⏸️ Auto-Scan: PAUSA';
-                    btn.style.background = '#dc3545';
+                    autoBtn.innerHTML = '⏸️ Auto-Scan: PAUSA';
+                    autoBtn.style.background = '#ff9800';
                     isRewinding = false;
+                    GM_setValue('cons_scan_state', 'PAUSED');
                 }
             };
 
@@ -218,35 +257,30 @@
             infoBox.className = 'cons-info-box';
             infoBox.innerHTML = "In attesa della pagina...";
 
-            dashboard.appendChild(btn);
+            dashboard.appendChild(manualBtn);
+            dashboard.appendChild(autoBtn);
             dashboard.appendChild(infoBox);
             document.body.appendChild(dashboard);
         }
 
         const infoBox = document.getElementById('tnt-cons-timer-box');
         if (infoBox) {
-            if (isInitializing) {
+            if (isManualModeActive) {
+                infoBox.innerHTML = "<span class='text-danger'>MODALITÀ MANUALE ATTIVA (Sync Sospeso)</span>";
+            } else if (isInitializing) {
                 infoBox.innerHTML = "Avvio in: <span class='text-warning'>" + initCountdown + "s</span>";
-            } else if (!isAutoScanActive && dbCooldownSeconds <= 0 && completedSweeps >= 2) {
-                infoBox.innerHTML = "<span class='text-ready'>IN PAUSA: Dati Pronti (2+ Giri)</span>";
+            } else if (!isAutoScanActive && completedSweeps >= 2) {
+                infoBox.innerHTML = "<span class='text-ready'>IN PAUSA: Dati Pronti (Cicli Terminati)</span>";
             } else if (!isAutoScanActive) {
-                infoBox.innerHTML = "<span class='text-warning'>IN PAUSA MANUALE</span>";
+                infoBox.innerHTML = "<span class='text-warning'>IN PAUSA (In attesa)</span>";
             } else {
-                const mins = Math.floor(Math.max(0, dbCooldownSeconds) / 60);
-                const secs = Math.max(0, dbCooldownSeconds) % 60;
-                const secsPadded = secs < 10 ? "0" + secs : secs;
-
-                if (dbCooldownSeconds <= 0 && completedSweeps < 2) {
-                    infoBox.innerHTML = "<span class='text-warning'>Attesa cicli... (" + completedSweeps + "/2)</span>";
-                } else {
-                    infoBox.innerHTML = "Scan in: <span class='text-warning'>" + mins + ":" + secsPadded + "</span> <small>(" + completedSweeps + "/2 giri)</small>";
-                }
+                infoBox.innerHTML = "Scansione in corso... <small>(" + completedSweeps + "/2 giri completati)</small>";
             }
         }
     }
 
     // ==========================================
-    // LOGICA 10-SECONDI SETUP
+    // LOGICA SETUP VELOCIZZATO (2.5 Secondi)
     // ==========================================
     function runSetupSequence() {
         if (hasInitializedFilters) return;
@@ -260,17 +294,17 @@
         GM_setValue('cons_scan_state', 'RUNNING');
         GM_setValue('cons_initial_scan_done', false);
 
-        setTimeout(deepClearFilters, 500);
+        setTimeout(deepClearFilters, 200);
 
         setTimeout(() => {
             const originSelect = document.querySelector('mat-select[formcontrolname="originLocCd"]');
-            if (originSelect && !originSelect.disabled) { forceAggressiveClick(originSelect); setTimeout(() => clickOptionByText('IMRH'), 500); }
-        }, 2000);
+            if (originSelect && !originSelect.disabled) { forceAggressiveClick(originSelect); setTimeout(() => clickOptionByText('IMRH'), 300); }
+        }, 500);
 
         setTimeout(() => {
             const hoursSelect = document.querySelector('mat-select[formcontrolname="hours"]');
-            if (hoursSelect && !hoursSelect.disabled) { forceAggressiveClick(hoursSelect); setTimeout(() => clickOptionByText(targetHours + ' hours'), 500); }
-        }, 4000);
+            if (hoursSelect && !hoursSelect.disabled) { forceAggressiveClick(hoursSelect); setTimeout(() => clickOptionByText(targetHours + ' hours'), 300); }
+        }, 1000);
 
         setTimeout(() => {
             const unitSelect = document.querySelector('mat-select[formcontrolname="unitType"]');
@@ -280,24 +314,24 @@
                     const closeBtn = parentField ? parentField.querySelector('button.close-icon') : null;
                     if (closeBtn && window.getComputedStyle(closeBtn).visibility !== 'hidden') forceAggressiveClick(closeBtn);
                 } else {
-                    forceAggressiveClick(unitSelect); setTimeout(() => clickOptionByText(targetUnit), 500);
+                    forceAggressiveClick(unitSelect); setTimeout(() => clickOptionByText(targetUnit), 300);
                 }
             }
-        }, 6000);
+        }, 1500);
 
         setTimeout(() => {
             const paginatorSelect = document.querySelector('.mat-paginator-page-size-select mat-select');
-            if (paginatorSelect) { forceAggressiveClick(paginatorSelect); setTimeout(() => clickOptionByText('100'), 500); }
-        }, 8000);
+            if (paginatorSelect) { forceAggressiveClick(paginatorSelect); setTimeout(() => clickOptionByText('100'), 300); }
+        }, 2000);
 
         setTimeout(() => {
             isInitializing = false;
             lastClickTime = 0;
-        }, 10000);
+        }, 2500);
     }
 
     // ==========================================
-    // TIMER GLOBALE 1 SECONDO
+    // TIMER GLOBALE 1 SECONDO (Pause Check)
     // ==========================================
     setInterval(() => {
         if (document.title.includes('CONS Maintenance')) {
@@ -312,11 +346,8 @@
 
             if (isInitializing && hasInitializedFilters) {
                 if (initCountdown > 0) initCountdown--;
-            } else if (!isInitializing && isAutoScanActive) {
-                if (dbCooldownSeconds > 0) {
-                    dbCooldownSeconds--;
-                }
-                else if (dbCooldownSeconds <= 0 && completedSweeps >= 2) {
+            } else if (!isInitializing && isAutoScanActive && !isManualModeActive) {
+                if (completedSweeps >= 2) {
                     isAutoScanActive = false;
                     GM_setValue('cons_scan_state', 'COMPLETED');
                     GM_setValue('cons_initial_scan_done', true);
@@ -350,10 +381,14 @@
             setTimeout(() => {
                 isProcessingCommand = false;
                 lastClickTime = Date.now();
-                if (!isAutoScanActive && dbCooldownSeconds <= 0 && completedSweeps >= 2) {
-                    GM_setValue('cons_scan_state', 'COMPLETED');
-                } else {
-                    GM_setValue('cons_scan_state', 'RUNNING');
+
+                isAutoScanActive = false;
+                GM_setValue('cons_scan_state', 'PAUSED_POST_CHECK');
+
+                const autoBtn = document.getElementById('tnt-cons-autoscan-btn');
+                if (autoBtn) {
+                    autoBtn.innerHTML = '⏸️ Auto-Scan: PAUSA (Post-Check)';
+                    autoBtn.style.background = '#ff9800';
                 }
             }, 1000);
         }, 500);
@@ -362,6 +397,11 @@
     function processSingleCheckQueue() {
         if (!GM_getValue('cons_initial_scan_done', false)) return false;
         if (isProcessingCommand) return true;
+
+        if (isManualModeActive) {
+            GM_setValue('cons_single_check_queue', '[]');
+            return false;
+        }
 
         let queueStr = GM_getValue('cons_single_check_queue', '[]');
         let queue = [];
@@ -403,153 +443,171 @@
                         if(parent) forceAggressiveClick(parent);
                     });
 
+                    // FASE 1 - ESTRAZIONE (Con Double Check per i colli)
                     setTimeout(() => {
-                        let newRecords = [];
-                        let targetDestRaw = null;
 
-                        const rows = document.querySelectorAll('tbody tr');
-                        rows.forEach(row => {
-                            const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
-                            if (!tIdNode || tIdNode.innerText.trim().toUpperCase() !== targetId) return;
+                        const executeFase1 = (isRetry) => {
+                            let newRecords = [];
+                            let targetDestRaw = null;
+                            let needsRetryForPieces = false;
 
-                            const stateNode = row.querySelector('td.mat-column-positionState');
-                            const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
-                            if (state === 'ABANDONED') return;
+                            const rows = document.querySelectorAll('tbody tr');
+                            rows.forEach(row => {
+                                const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
+                                if (!tIdNode || tIdNode.innerText.trim().toUpperCase() !== targetId) return;
 
-                            const consIdNode = row.querySelector('td.mat-column-consId');
-                            const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
-
-                            const unitTypeNode = row.querySelector('td.mat-column-unitType');
-                            const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
-
-                            const assetIdNode = row.querySelector('td.mat-column-assetId');
-                            const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
-
-                            const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
-                            const rawOrigin = originNode ? originNode.innerText.trim() : '';
-                            const origin = translateLocID(rawOrigin);
-
-                            const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
-                            const rawDest = destNode ? destNode.innerText.trim() : '';
-                            const destination = translateLocID(rawDest);
-
-                            if (!targetDestRaw && rawDest !== '') {
-                                targetDestRaw = rawDest;
-                            }
-
-                            const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
-                            const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
-
-                            const closeNode = row.querySelector('td.mat-column-closeDate') || row.querySelector('td.mat-column-closeDt');
-                            const closeDate = closeNode ? closeNode.innerText.trim().replace(/\n/g, ' ') : '';
-
-                            let pieceCount = 0;
-                            const pieceSpan = row.querySelector('.piece-count');
-                            if (pieceSpan) {
-                                pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
-                            }
-
-                            if (consId !== '') {
-                                newRecords.push({ state, assetId, unitType, pieceCount, consId, origin, destination, openDate, closeDate });
-                            }
-                        });
-
-                        if (targetDestRaw) {
-                            console.log(`[YOS-SYNC] 🔍 SINGLE CHECK FASE 2: Cerco Bulk/Bag (OTHER) per la destinazione ${targetDestRaw}`);
-                            deepClearFilters();
-
-                            setTimeout(() => {
-                                let destInput = Array.from(document.querySelectorAll('input')).find(i => i.getAttribute('formcontrolname') === 'destinationLocCd' || (i.placeholder && i.placeholder.includes('Destination')));
-                                if (destInput) {
-                                    destInput.value = targetDestRaw;
-                                    destInput.dispatchEvent(new Event('input', {bubbles: true}));
-                                    destInput.dispatchEvent(new Event('change', {bubbles: true}));
+                                const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
+                                const rawDest = destNode ? destNode.innerText.trim() : '';
+                                if (!targetDestRaw && rawDest !== '') {
+                                    targetDestRaw = rawDest;
                                 }
 
-                                const unitSelect = document.querySelector('mat-select[formcontrolname="unitType"]');
-                                if (unitSelect && !unitSelect.disabled) {
-                                    forceAggressiveClick(unitSelect);
+                                const stateNode = row.querySelector('td.mat-column-positionState');
+                                const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
 
-                                    setTimeout(() => {
-                                        clickOptionByText('OTHER');
+                                if (state === 'ABANDONED') return;
+
+                                const consIdNode = row.querySelector('td.mat-column-consId');
+                                const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
+
+                                const unitTypeNode = row.querySelector('td.mat-column-unitType');
+                                const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
+
+                                const assetIdNode = row.querySelector('td.mat-column-assetId');
+                                const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
+
+                                const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
+                                const rawOrigin = originNode ? originNode.innerText.trim() : '';
+                                const origin = translateLocID(rawOrigin);
+                                const destination = translateLocID(rawDest);
+
+                                const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
+                                const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
+
+                                const closeNode = row.querySelector('td.mat-column-closeDate') || row.querySelector('td.mat-column-closeDt');
+                                const closeDate = closeNode ? closeNode.innerText.trim().replace(/\n/g, ' ') : '';
+
+                                let pieceCount = 0;
+                                const pieceSpan = row.querySelector('.piece-count');
+                                if (pieceSpan) {
+                                    let parsed = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10);
+                                    if (!isNaN(parsed)) pieceCount = parsed;
+                                }
+
+                                if (consId !== '') {
+                                    if (pieceCount === 0 && !isRetry) {
+                                        needsRetryForPieces = true;
+                                    }
+                                    newRecords.push({ state, assetId, unitType, pieceCount, consId, origin, destination, openDate, closeDate });
+                                }
+                            });
+
+                            if (needsRetryForPieces) {
+                                console.log(`[YOS-SYNC] ⚠️ Colli a 0, eseguo Double Check rapido (800ms)...`);
+                                setTimeout(() => executeFase1(true), 800);
+                                return;
+                            }
+
+                            // FASE 2
+                            if (targetDestRaw) {
+                                console.log(`[YOS-SYNC] 🔍 SINGLE CHECK FASE 2: Cerco Bulk/Bag (OTHER) per dest: ${targetDestRaw}`);
+                                deepClearFilters();
+
+                                setTimeout(() => {
+                                    let destInput = Array.from(document.querySelectorAll('input')).find(i => i.getAttribute('formcontrolname') === 'destinationLocCd' || (i.placeholder && i.placeholder.includes('Destination')));
+                                    if (destInput) {
+                                        destInput.value = targetDestRaw;
+                                        destInput.dispatchEvent(new Event('input', {bubbles: true}));
+                                        destInput.dispatchEvent(new Event('change', {bubbles: true}));
+                                    }
+
+                                    const unitSelect = document.querySelector('mat-select[formcontrolname="unitType"]');
+                                    if (unitSelect && !unitSelect.disabled) {
+                                        forceAggressiveClick(unitSelect);
 
                                         setTimeout(() => {
-                                            const refreshBtn2 = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
-                                            forceAggressiveClick(refreshBtn2);
+                                            clickOptionByText('OTHER');
 
                                             setTimeout(() => {
-                                                const viewBtns2 = document.querySelectorAll('button[title="Click to view piece count"]');
-                                                viewBtns2.forEach(btn => forceAggressiveClick(btn));
-
-                                                const refreshPieceBtns2 = document.querySelectorAll('.piece-count-refresh');
-                                                refreshPieceBtns2.forEach(btn => {
-                                                    forceAggressiveClick(btn);
-                                                    const parent = btn.closest('button') || btn.parentElement;
-                                                    if(parent) forceAggressiveClick(parent);
-                                                });
+                                                const refreshBtn2 = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('Refresh CONS Data'));
+                                                forceAggressiveClick(refreshBtn2);
 
                                                 setTimeout(() => {
-                                                    const rows2 = document.querySelectorAll('tbody tr');
-                                                    rows2.forEach(row => {
-                                                        const stateNode = row.querySelector('td.mat-column-positionState');
-                                                        const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
-                                                        if (state === 'ABANDONED') return;
+                                                    const viewBtns2 = document.querySelectorAll('button[title="Click to view piece count"]');
+                                                    viewBtns2.forEach(btn => forceAggressiveClick(btn));
 
-                                                        const unitTypeNode = row.querySelector('td.mat-column-unitType');
-                                                        const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
-                                                        if (unitType !== 'OTHER') return;
-
-                                                        const consIdNode = row.querySelector('td.mat-column-consId');
-                                                        const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
-
-                                                        const assetIdNode = row.querySelector('td.mat-column-assetId');
-                                                        const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
-
-                                                        const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
-                                                        const rawOrigin2 = originNode ? originNode.innerText.trim() : '';
-                                                        const origin = translateLocID(rawOrigin2);
-
-                                                        const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
-                                                        const rawDest2 = destNode ? destNode.innerText.trim() : '';
-                                                        const destination = translateLocID(rawDest2);
-
-                                                        const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
-                                                        const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
-
-                                                        const closeNode = row.querySelector('td.mat-column-closeDate') || row.querySelector('td.mat-column-closeDt');
-                                                        const closeDate = closeNode ? closeNode.innerText.trim().replace(/\n/g, ' ') : '';
-
-                                                        let pieceCount = 0;
-                                                        const pieceSpan = row.querySelector('.piece-count');
-                                                        if (pieceSpan) {
-                                                            pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
-                                                        }
-
-                                                        if (consId !== '') {
-                                                            if (!newRecords.some(r => r.consId === consId)) {
-                                                                newRecords.push({ state, assetId, unitType, pieceCount, consId, origin, destination, openDate, closeDate });
-                                                            }
-                                                        }
+                                                    const refreshPieceBtns2 = document.querySelectorAll('.piece-count-refresh');
+                                                    refreshPieceBtns2.forEach(btn => {
+                                                        forceAggressiveClick(btn);
+                                                        const parent = btn.closest('button') || btn.parentElement;
+                                                        if(parent) forceAggressiveClick(parent);
                                                     });
 
-                                                    finalizeSingleCheck(targetId, newRecords);
+                                                    setTimeout(() => {
+                                                        const rows2 = document.querySelectorAll('tbody tr');
+                                                        rows2.forEach(row => {
+                                                            const stateNode = row.querySelector('td.mat-column-positionState');
+                                                            const state = stateNode ? stateNode.innerText.trim().toUpperCase() : '';
+                                                            if (state === 'ABANDONED') return;
 
-                                                }, 3500);
-                                            }, 2000);
+                                                            const unitTypeNode = row.querySelector('td.mat-column-unitType');
+                                                            const unitType = unitTypeNode ? unitTypeNode.innerText.trim().toUpperCase() : '';
+                                                            if (unitType !== 'OTHER') return;
+
+                                                            const consIdNode = row.querySelector('td.mat-column-consId');
+                                                            const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
+
+                                                            const assetIdNode = row.querySelector('td.mat-column-assetId');
+                                                            const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
+
+                                                            const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
+                                                            const rawOrigin2 = originNode ? originNode.innerText.trim() : '';
+                                                            const origin = translateLocID(rawOrigin2);
+
+                                                            const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
+                                                            const rawDest2 = destNode ? destNode.innerText.trim() : '';
+                                                            const destination = translateLocID(rawDest2);
+
+                                                            const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
+                                                            const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
+
+                                                            const closeNode = row.querySelector('td.mat-column-closeDate') || row.querySelector('td.mat-column-closeDt');
+                                                            const closeDate = closeNode ? closeNode.innerText.trim().replace(/\n/g, ' ') : '';
+
+                                                            let pieceCount = 0;
+                                                            const pieceSpan = row.querySelector('.piece-count');
+                                                            if (pieceSpan) {
+                                                                pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
+                                                            }
+
+                                                            if (consId !== '') {
+                                                                if (!newRecords.some(r => r.consId === consId)) {
+                                                                    newRecords.push({ state, assetId, unitType, pieceCount, consId, origin, destination, openDate, closeDate });
+                                                                }
+                                                            }
+                                                        });
+
+                                                        finalizeSingleCheck(targetId, newRecords);
+
+                                                    }, 3000);
+                                                }, 2000);
+                                            }, 500);
                                         }, 500);
-                                    }, 500);
-                                } else {
-                                    finalizeSingleCheck(targetId, newRecords);
-                                }
-                            }, 500);
-                        } else {
-                            finalizeSingleCheck(targetId, newRecords);
-                        }
+                                    } else {
+                                        finalizeSingleCheck(targetId, newRecords);
+                                    }
+                                }, 1000);
+                            } else {
+                                finalizeSingleCheck(targetId, newRecords);
+                            }
+                        };
 
-                    }, 3500);
+                        executeFase1(false); // Avvia Fase 1
+
+                    }, 3000);
                 }, 2000);
-            }, 500);
-        }, 500);
+            }, 1500);
+        }, 800);
 
         return true;
     }
@@ -559,6 +617,13 @@
     // ==========================================
     function checkPendingCommands() {
         if (isProcessingCommand) return true;
+
+        if (isManualModeActive) {
+            GM_setValue('cons_pending_hours_command', null);
+            GM_setValue('cons_pending_unittype_command', null);
+            return false;
+        }
+
         const pendingHours = GM_getValue('cons_pending_hours_command', null);
         const pendingUnit = GM_getValue('cons_pending_unittype_command', null);
 
@@ -604,13 +669,25 @@
         injectConsDashboard();
 
         if (isInitializing) { runSetupSequence(); return; }
+
+        if (isManualModeActive) {
+            GM_setValue('cons_single_check_queue', '[]');
+            return;
+        }
+
         if (processSingleCheckQueue()) return;
         if (checkPendingCommands()) return;
         if (isProcessingCommand || !isAutoScanActive) return;
 
         const loader = document.querySelector('mat-progress-spinner, .loader');
         if (loader && loader.offsetHeight > 0) return;
-        if (Date.now() - lastClickTime < 2500) return;
+
+        // Controllo se ci sono asset nella pagina per eventuale ritardo extra (+500ms)
+        const rowsCheck = document.querySelectorAll('tbody tr');
+        let hasAssets = Array.from(rowsCheck).some(r => r.querySelector('td.mat-column-trailerAssetId'));
+        let targetDelay = hasAssets ? 800 : 1300; // 800ms standard, 1300ms se non trova targe
+
+        if (Date.now() - lastClickTime < targetDelay) return;
 
         const prevBtn = document.querySelector('button[aria-label="Previous page"]');
         const nextBtn = document.querySelector('button[aria-label="Next page"]');
@@ -769,12 +846,20 @@
             if (lastHeartbeat === 0) {
                 statusBadge.style.backgroundColor = '#6c757d'; textEl.innerText = 'CONS in attesa...';
             }
+            else if (scanState === 'MANUAL_MODE') {
+                statusBadge.style.backgroundColor = '#6c757d'; statusBadge.style.color = 'white';
+                textEl.innerText = `🛠️ CONS IN MANUALE (Sync bloccato)`;
+            }
             else if (scanState === 'SINGLE_CHECK') {
                 statusBadge.style.backgroundColor = '#9c27b0'; statusBadge.style.color = 'white';
                 textEl.innerText = `🟣 SINGLE CHECK IN CORSO...`;
             }
+            else if (scanState === 'PAUSED_POST_CHECK') {
+                statusBadge.style.backgroundColor = '#ff9800'; statusBadge.style.color = 'black';
+                textEl.innerText = `⏸️ CONS IN PAUSA (Post-Check) - ${numTrailers} TRL`;
+            }
             else if (timeDiff < 6000) {
-                statusBadge.style.backgroundColor = '#28a745'; textEl.innerText = `🟢 SYNC ATTIVO (${numTrailers} TRL)`;
+                statusBadge.style.backgroundColor = '#28a745'; statusBadge.style.color = 'white'; textEl.innerText = `🟢 SYNC ATTIVO (${numTrailers} TRL)`;
             } else if (timeDiff < 15000) {
                 statusBadge.style.backgroundColor = '#ffc107'; statusBadge.style.color = 'black'; textEl.innerText = `🟡 LENTO/PAUSA (${numTrailers} TRL)`;
             } else {
@@ -862,73 +947,81 @@
                 </div>
             `;
         } else {
-            const records = currentConsTrailers[foundTrailerId];
-            if (!records || records.length === 0) return;
+            const records = currentConsTrailers[foundTrailerId] || [];
 
             let d = new Date(currentHeartbeat);
             let timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + ':' + d.getSeconds().toString().padStart(2, '0');
 
+            const trailers = records.filter(r => r.unitType === 'TRAILER').sort((a, b) => Number(b.consId) - Number(a.consId));
+            const bulks = records.filter(r => r.unitType !== 'TRAILER').sort((a, b) => Number(b.consId) - Number(a.consId));
+
+            let warningHTML = "";
+            if (trailers.length === 0) {
+                warningHTML = `<div style="background-color: rgba(220,53,69,0.2); border: 1px solid #dc3545; color: #ff4d4d; padding: 10px; margin-bottom: 15px; text-align: center; font-weight: bold; font-size: 15px; border-radius: 4px; box-shadow: 0 0 10px rgba(220,53,69,0.5);">CASSA SENZA CONS COLLEGATA</div>`;
+            }
+
             tableHTML = `
                 <div class="tnt-cons-modal-injection" data-heartbeat="${lastHeartbeat}" data-loading="false" data-initial="${isInitialScanDone}" style="margin-top: 20px; border-top: 1px solid #ff9800; padding-top: 10px; width: 100%;">
+                    ${warningHTML}
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <strong style="color: #ff9800; font-size: 14px;">🚚 DATI CONS LIVE E BULK (${foundTrailerId})</strong>
                         <span style="color: #bbb; font-size: 11px;">Ultimo aggiornamento: <b style="color: #fff">${timeStr}</b></span>
                     </div>
+            `;
+
+            if (records.length > 0) {
+                tableHTML += `
                     <div style="overflow-x: auto;">
-                        <table style="width: 100%; font-size: 12px; border-collapse: collapse; text-align: left; font-family: Roboto, sans-serif;">
+                        <table style="width: 100%; font-size: 14px; font-weight: bold; border-collapse: collapse; text-align: left; font-family: Roboto, sans-serif;">
                             <thead>
                                 <tr style="border-bottom: 2px solid #ff9800; color: #ff9800;">
-                                    <th style="padding: 6px;">CONS ID</th>
-                                    <th style="padding: 6px;">ASSET ID</th>
-                                    <th style="padding: 6px;">UNIT TYPE</th>
-                                    <th style="padding: 6px;">STATE</th>
-                                    <th style="padding: 6px;">ORIGIN</th>
-                                    <th style="padding: 6px;">DEST.</th>
-                                    <th style="padding: 6px;">OPEN DATE</th>
-                                    <th style="padding: 6px;">CLOSE DATE</th>
-                                    <th style="padding: 6px; text-align: center;">PIECES</th>
+                                    <th style="padding: 2px 4px;">CONS ID</th>
+                                    <th style="padding: 2px 4px;">ASSET ID</th>
+                                    <th style="padding: 2px 4px;">UNIT TYPE</th>
+                                    <th style="padding: 2px 4px;">STATE</th>
+                                    <th style="padding: 2px 4px;">DEST.</th>
+                                    <th style="padding: 2px 4px;">OPEN</th>
+                                    <th style="padding: 2px 4px;">CLOSE</th>
+                                    <th style="padding: 2px 4px; text-align: center;">PIECES</th>
                                 </tr>
                             </thead>
                             <tbody>
-            `;
-
-            // Ordiniamo in modo che i più nuovi siano in alto in entrambe le categorie
-            const trailers = records.filter(r => r.unitType === 'TRAILER').sort((a, b) => Number(b.consId) - Number(a.consId));
-            const bulks = records.filter(r => r.unitType !== 'TRAILER').sort((a, b) => Number(b.consId) - Number(a.consId));
-
-            trailers.forEach(r => {
-                tableHTML += `
-                    <tr style="border-bottom: 1px dotted rgba(255, 152, 0, 0.4); color: #ff9800;">
-                        <td style="padding: 6px; font-weight: bold;">${r.consId}</td>
-                        <td style="padding: 6px;">${r.assetId}</td>
-                        <td style="padding: 6px;">${r.unitType}</td>
-                        <td style="padding: 6px;">${r.state}</td>
-                        <td style="padding: 6px;">${r.origin || '-'}</td>
-                        <td style="padding: 6px;">${r.destination || '-'}</td>
-                        <td style="padding: 6px;">${r.openDate || '-'}</td>
-                        <td style="padding: 6px;">${r.closeDate || '-'}</td>
-                        <td style="padding: 6px; font-weight: bold; color: #fff; background-color: rgba(255, 152, 0, 0.2); text-align: center;">${r.pieceCount}</td>
-                    </tr>
                 `;
-            });
 
-            bulks.forEach(r => {
-                tableHTML += `
-                    <tr style="border-bottom: 1px dotted rgba(199, 125, 255, 0.4); color: #c77dff;">
-                        <td style="padding: 6px; font-weight: bold;">${r.consId}</td>
-                        <td style="padding: 6px;">${r.assetId}</td>
-                        <td style="padding: 6px;">${r.unitType}</td>
-                        <td style="padding: 6px;">${r.state}</td>
-                        <td style="padding: 6px;">${r.origin || '-'}</td>
-                        <td style="padding: 6px;">${r.destination || '-'}</td>
-                        <td style="padding: 6px;">${r.openDate || '-'}</td>
-                        <td style="padding: 6px;">${r.closeDate || '-'}</td>
-                        <td style="padding: 6px; font-weight: bold; color: #fff; background-color: rgba(199, 125, 255, 0.2); text-align: center;">${r.pieceCount}</td>
-                    </tr>
-                `;
-            });
+                trailers.forEach(r => {
+                    tableHTML += `
+                        <tr style="border-bottom: 1px dotted rgba(255, 152, 0, 0.4); color: #ff9800; line-height: 1.2;">
+                            <td style="padding: 2px 4px;">${r.consId}</td>
+                            <td style="padding: 2px 4px;">${r.assetId}</td>
+                            <td style="padding: 2px 4px;">${r.unitType}</td>
+                            <td style="padding: 2px 4px;">${r.state}</td>
+                            <td style="padding: 2px 4px;">${r.destination || '-'}</td>
+                            <td style="padding: 2px 4px;">${formatShortDate(r.openDate)}</td>
+                            <td style="padding: 2px 4px;">${formatShortDate(r.closeDate)}</td>
+                            <td style="padding: 2px 4px; color: #fff; background-color: rgba(255, 152, 0, 0.2); text-align: center;">${r.pieceCount}</td>
+                        </tr>
+                    `;
+                });
 
-            tableHTML += `</tbody></table></div></div>`;
+                bulks.forEach(r => {
+                    tableHTML += `
+                        <tr style="border-bottom: 1px dotted rgba(199, 125, 255, 0.4); color: #c77dff; line-height: 1.2;">
+                            <td style="padding: 2px 4px;">${r.consId}</td>
+                            <td style="padding: 2px 4px;">${r.assetId}</td>
+                            <td style="padding: 2px 4px;">${r.unitType}</td>
+                            <td style="padding: 2px 4px;">${r.state}</td>
+                            <td style="padding: 2px 4px;">${r.destination || '-'}</td>
+                            <td style="padding: 2px 4px;">${formatShortDate(r.openDate)}</td>
+                            <td style="padding: 2px 4px;">${formatShortDate(r.closeDate)}</td>
+                            <td style="padding: 2px 4px; color: #fff; background-color: rgba(199, 125, 255, 0.2); text-align: center;">${r.pieceCount}</td>
+                        </tr>
+                    `;
+                });
+
+                tableHTML += `</tbody></table></div>`;
+            }
+
+            tableHTML += `</div>`;
         }
 
         const injectionDiv = document.createElement('div');
@@ -1061,11 +1154,7 @@
                     const trailers = records.filter(r => r.unitType === 'TRAILER');
                     const bulks = records.filter(r => r.unitType !== 'TRAILER');
 
-                    // V2.8 FIX: Nessuna somma. Prendiamo solo i colli della CONS più recente.
-                    // Ordiniamo per consId decrescente (il più alto è il più nuovo).
                     const sortedRecords = [...records].sort((a, b) => Number(b.consId) - Number(a.consId));
-
-                    // Diamo la priorità all'ultimo TRAILER inserito. Se c'è solo BULK, usiamo l'ultimo BULK.
                     const ultimaCons = sortedRecords.find(r => r.unitType === 'TRAILER') || sortedRecords[0];
                     totalPieces = ultimaCons ? (ultimaCons.pieceCount || 0) : 0;
 
