@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.9.8
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.10.0
 // @namespace    http://tampermonkey.net/
-// @version      2.9.8
-// @description  Single Check a 2 stadi (Trailer immediati + Loading Bulk), Audio Wake Lock.
+// @version      2.10.0
+// @description  FIX DEFINITIVO Cache Casse Chiuse (Double Click Murato), Forza Refresh Potenziato.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -16,8 +16,8 @@
     'use strict';
 
     // STATO DEL SISTEMA
-    let isSystemStarted = false; 
-    let isAutoScanActive = false; 
+    let isSystemStarted = false;
+    let isAutoScanActive = false;
     let isManualModeActive = false;
     let isRewinding = false;
     let lastClickTime = 0;
@@ -25,11 +25,11 @@
     let isProcessingCommand = false;
     let isInitializing = false;
     let hasInitializedFilters = false;
-    let initCountdown = 3; 
+    let initCountdown = 3;
 
     let completedSweeps = 0;
     let activeTrailers = {};
-    
+
     if (document.title.includes('CONS Maintenance')) {
         GM_setValue('cons_scan_state', 'STANDBY');
     }
@@ -140,6 +140,15 @@
             100% { opacity: 1; }
         }
         .yos-pulse-text { animation: yos-pulse 1.5s infinite; }
+
+        #tnt-force-refresh-btn {
+            margin-left: 15px; padding: 3px 10px; font-size: 11px; font-weight: bold;
+            background-color: #007bff; color: white; border: 1px solid #0056b3;
+            border-radius: 4px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            transition: background-color 0.2s;
+        }
+        #tnt-force-refresh-btn:hover { background-color: #0056b3; }
+        #tnt-force-refresh-btn:active { transform: scale(0.95); }
     `;
     document.head.appendChild(style);
 
@@ -198,24 +207,24 @@
             const wakeLockOsc = audioCtx.createOscillator();
             const wakeLockGain = audioCtx.createGain();
             wakeLockOsc.type = 'sine';
-            wakeLockOsc.frequency.value = 30; 
-            wakeLockGain.gain.value = 0.01; 
+            wakeLockOsc.frequency.value = 30;
+            wakeLockGain.gain.value = 0.01;
             wakeLockOsc.connect(wakeLockGain);
             wakeLockGain.connect(audioCtx.destination);
             wakeLockOsc.start();
 
             setInterval(() => {
                 if (!isAutoScanActive || isManualModeActive) return;
-                
+
                 const pingOsc = audioCtx.createOscillator();
                 const pingGain = audioCtx.createGain();
                 pingOsc.type = 'sine';
-                pingOsc.frequency.value = 800; 
-                
+                pingOsc.frequency.value = 800;
+
                 pingGain.gain.setValueAtTime(0, audioCtx.currentTime);
-                pingGain.gain.linearRampToValueAtTime(0.015, audioCtx.currentTime + 0.02); 
+                pingGain.gain.linearRampToValueAtTime(0.015, audioCtx.currentTime + 0.02);
                 pingGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
-                
+
                 pingOsc.connect(pingGain);
                 pingGain.connect(audioCtx.destination);
                 pingOsc.start();
@@ -224,15 +233,11 @@
 
             isAudioHumming = true;
             console.log('[YOS-SYNC] 🎵 Sistema Audio attivato');
-        } catch (e) {
-            console.warn('[YOS-SYNC] 🔇 Errore avvio audio.');
-        }
+        } catch (e) {}
     }
 
     document.addEventListener('click', () => {
-        if (audioCtx && audioCtx.state === 'suspended') {
-            audioCtx.resume();
-        }
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     });
 
     // ==========================================
@@ -249,11 +254,11 @@
             const manualBtn = document.createElement('button');
             manualBtn.id = 'tnt-cons-manual-btn';
             manualBtn.className = 'cons-dash-btn';
-            
+
             const autoBtn = document.createElement('button');
             autoBtn.id = 'tnt-cons-autoscan-btn';
             autoBtn.className = 'cons-dash-btn';
-            
+
             const infoBox = document.createElement('div');
             infoBox.id = 'tnt-cons-timer-box';
             infoBox.className = 'cons-info-box';
@@ -277,11 +282,11 @@
                     startSystemLogic();
                     return;
                 }
-                
+
                 if (isManualModeActive) isManualModeActive = false;
 
                 if (!isAutoScanActive && completedSweeps >= 2) {
-                    startSystemLogic(); 
+                    startSystemLogic();
                     return;
                 }
 
@@ -311,7 +316,7 @@
             infoBox.innerHTML = "<span class='text-warning'>SISTEMA IN STANDBY</span>";
         } else {
             manualBtn.style.display = 'block';
-            
+
             if (isManualModeActive) {
                 manualBtn.innerHTML = '🛠️ Lavoro Manuale: ON';
                 manualBtn.style.background = '#dc3545';
@@ -321,7 +326,7 @@
             } else {
                 manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
                 manualBtn.style.background = '#6c757d';
-                
+
                 if (isInitializing) {
                     autoBtn.innerHTML = '⏳ Inizializzazione...';
                     autoBtn.style.background = '#ffc107';
@@ -353,12 +358,12 @@
         initCountdown = 3;
         completedSweeps = 0;
         lastClickTime = Date.now();
-        
+
         GM_setValue('cons_active_trailers', '{}');
-        GM_setValue('cons_completed_single_checks', '[]'); 
+        GM_setValue('cons_completed_single_checks', '[]');
         GM_setValue('cons_initial_scan_done', false);
         GM_setValue('cons_scan_state', 'RUNNING');
-        
+
         deepClearFilters();
     }
 
@@ -409,7 +414,7 @@
         if (document.title.includes('CONS Maintenance')) {
             if (GM_getValue('cons_hard_reset_command', false)) {
                 GM_setValue('cons_hard_reset_command', false);
-                startSystemLogic(); 
+                startSystemLogic();
             }
 
             if (isInitializing && hasInitializedFilters) {
@@ -435,11 +440,19 @@
         GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
         GM_setValue('cons_last_heartbeat', Date.now());
 
-        let completedChecks = [];
-        try { completedChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(e){}
-        if (!completedChecks.includes(targetId)) {
-            completedChecks.push(targetId);
-            GM_setValue('cons_completed_single_checks', JSON.stringify(completedChecks));
+        // SALVA IN CACHE SOLO SE LA CASSA E' CHIUSA (Tracking List)
+        let trackedStr = GM_getValue('yos_ready_trailers_tracked', "[]");
+        let readyList = [];
+        try { readyList = JSON.parse(trackedStr); } catch(e){}
+
+        if (readyList.includes(targetId)) {
+            let completedChecks = [];
+            try { completedChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(e){}
+            if (!completedChecks.includes(targetId)) {
+                completedChecks.push(targetId);
+                GM_setValue('cons_completed_single_checks', JSON.stringify(completedChecks));
+                console.log(`[YOS-SYNC] 💾 Salvato in CACHE DEFINITIVA (Cassa Chiusa): ${targetId}`);
+            }
         }
 
         deepClearFilters();
@@ -450,7 +463,7 @@
             setTimeout(() => {
                 isProcessingCommand = false;
                 lastClickTime = Date.now();
-                
+
                 isAutoScanActive = false;
                 GM_setValue('cons_scan_state', 'PAUSED_POST_CHECK');
             }, 1000);
@@ -460,9 +473,9 @@
     function processSingleCheckQueue() {
         if (!GM_getValue('cons_initial_scan_done', false)) return false;
         if (isProcessingCommand) return true;
-        
+
         if (isManualModeActive) {
-            GM_setValue('cons_single_check_queue', '[]'); 
+            GM_setValue('cons_single_check_queue', '[]');
             return false;
         }
 
@@ -507,7 +520,7 @@
                     });
 
                     setTimeout(() => {
-                        
+
                         const executeFase1 = (isRetry) => {
                             let newRecords = [];
                             let targetDestRaw = null;
@@ -556,11 +569,10 @@
 
                             if (needsRetryForPieces) {
                                 console.log(`[YOS-SYNC] ⚠️ Colli vuoti, attesa extra per caricamento FedEx (2.5 sec)...`);
-                                setTimeout(() => executeFase1(true), 2500); 
+                                setTimeout(() => executeFase1(true), 2500);
                                 return;
                             }
 
-                            // ---> NOVITÀ V2.9.8: SALVATAGGIO INTERMEDIO E AGGIORNAMENTO UI IMMEDIATO <---
                             activeTrailers[targetId] = [...newRecords];
                             GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
                             GM_setValue('cons_last_heartbeat', Date.now());
@@ -614,16 +626,21 @@
 
                                                             const consIdNode = row.querySelector('td.mat-column-consId');
                                                             const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
+
                                                             const assetIdNode = row.querySelector('td.mat-column-assetId');
                                                             const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
+
                                                             const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
                                                             const rawOrigin2 = originNode ? originNode.innerText.trim() : '';
                                                             const origin = translateLocID(rawOrigin2);
+
                                                             const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
                                                             const rawDest2 = destNode ? destNode.innerText.trim() : '';
                                                             const destination = translateLocID(rawDest2);
+
                                                             const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
                                                             const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
+
                                                             const closeNode = row.querySelector('td.mat-column-closeDate') || row.querySelector('td.mat-column-closeDt');
                                                             const closeDate = closeNode ? closeNode.innerText.trim().replace(/\n/g, ' ') : '';
 
@@ -642,14 +659,14 @@
 
                                                         finalizeSingleCheck(targetId, newRecords);
 
-                                                    }, 3000); 
-                                                }, 2000); 
-                                            }, 500); 
-                                        }, 500); 
+                                                    }, 3000);
+                                                }, 2000);
+                                            }, 500);
+                                        }, 500);
                                     } else {
                                         finalizeSingleCheck(targetId, newRecords);
                                     }
-                                }, 1000); 
+                                }, 1000);
                             } else {
                                 finalizeSingleCheck(targetId, newRecords);
                             }
@@ -657,9 +674,9 @@
 
                         executeFase1(false);
 
-                    }, 3000); 
-                }, 2000); 
-            }, 1500); 
+                    }, 3000);
+                }, 2000);
+            }, 1500);
         }, 800);
 
         return true;
@@ -670,7 +687,7 @@
     // ==========================================
     function checkPendingCommands() {
         if (isProcessingCommand) return true;
-        
+
         if (isManualModeActive) {
             GM_setValue('cons_pending_hours_command', null);
             GM_setValue('cons_pending_unittype_command', null);
@@ -721,13 +738,13 @@
         if (!document.title.includes('CONS Maintenance')) return;
         injectConsDashboard();
 
-        if (!isSystemStarted) return; 
+        if (!isSystemStarted) return;
 
         if (isInitializing) { runSetupSequence(); return; }
-        
+
         if (isManualModeActive) {
             GM_setValue('cons_single_check_queue', '[]');
-            return; 
+            return;
         }
 
         if (processSingleCheckQueue()) return;
@@ -736,12 +753,12 @@
 
         const loader = document.querySelector('mat-progress-spinner, .loader');
         if (loader && loader.offsetHeight > 0) return;
-        
+
         const rowsCheck = document.querySelectorAll('tbody tr');
         let hasAssets = Array.from(rowsCheck).some(r => r.querySelector('td.mat-column-trailerAssetId'));
-        let targetDelay = hasAssets ? 800 : 1300; 
+        let targetDelay = hasAssets ? 800 : 1300;
 
-        if (Date.now() - lastClickTime < targetDelay) return; 
+        if (Date.now() - lastClickTime < targetDelay) return;
 
         const prevBtn = document.querySelector('button[aria-label="Previous page"]');
         const nextBtn = document.querySelector('button[aria-label="Next page"]');
@@ -894,7 +911,7 @@
             const scanState = GM_getValue('cons_scan_state', 'STANDBY');
 
             if (scanState === 'STANDBY' || lastHeartbeat === 0) {
-                statusBadge.style.backgroundColor = '#6c757d'; 
+                statusBadge.style.backgroundColor = '#6c757d';
                 textEl.innerText = '⚠️ PREMI START PER AVVIARE CONS';
             }
             else if (scanState === 'MANUAL_MODE') {
@@ -963,27 +980,15 @@
 
         if (!foundTrailerId && isInitialScanDone) return;
 
-        let isReadyModal = false;
-        if (foundTrailerId) {
-            const nameDivs = document.querySelectorAll('div[id^="unitname_"]');
-            nameDivs.forEach(div => {
-                if (div.innerText.trim().toUpperCase() === foundTrailerId) {
-                    const parentUnit = div.closest('.unit_ready_outline');
-                    if (parentUnit && parentUnit.querySelector('.doorstatus-ready-loaded')) {
-                        isReadyModal = true;
-                    }
-                }
-            });
-        }
-
+        // CONTROLLO BLINDATO CACHE: Usa solo la memoria, ignora il DOM.
         const completedChecks = [];
         try { Object.assign(completedChecks, JSON.parse(GM_getValue('cons_completed_single_checks', '[]'))); } catch(e){}
 
         if (!remarksContainer.dataset.autoCheckTriggered) {
             remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
-            
-            if (isReadyModal && completedChecks.includes(foundTrailerId)) {
-                console.log(`[YOS-SYNC] ⚡ CACHE HIT MODAL: ${foundTrailerId} è cassa chiusa. Evito Single Check.`);
+
+            if (completedChecks.includes(foundTrailerId)) {
+                console.log(`[YOS-SYNC] ⚡ CACHE HIT MODAL: ${foundTrailerId} è in memoria definitiva. Nessun nuovo check.`);
             } else {
                 let singleQueueStr = GM_getValue('cons_single_check_queue', "[]");
                 let singleQueue = [];
@@ -1003,8 +1008,9 @@
 
         let isLoading = !isInitialScanDone || (currentHeartbeat <= triggerTime);
 
-        if (isReadyModal && completedChecks.includes(foundTrailerId)) {
-            isLoading = false; 
+        // SE E' CACHED, MOSTRA SUBITO SENZA LOADING
+        if (completedChecks.includes(foundTrailerId)) {
+            isLoading = false;
         }
 
         let tableHTML = '';
@@ -1026,7 +1032,7 @@
             `;
         } else {
             const records = currentConsTrailers[foundTrailerId] || [];
-            
+
             let d = new Date(currentHeartbeat);
             let timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + ':' + d.getSeconds().toString().padStart(2, '0');
 
@@ -1042,7 +1048,10 @@
                 <div class="tnt-cons-modal-injection" data-heartbeat="${lastHeartbeat}" data-loading="false" data-initial="${isInitialScanDone}" style="margin-top: 20px; border-top: 1px solid #ff9800; padding-top: 10px; width: 100%;">
                     ${warningHTML}
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <strong style="color: #ff9800; font-size: 14px;">🚚 DATI CONS LIVE E BULK (${foundTrailerId})</strong>
+                        <div>
+                            <strong style="color: #ff9800; font-size: 14px;">🚚 DATI CONS LIVE E BULK (${foundTrailerId})</strong>
+                            <button id="tnt-force-refresh-btn">🔄 Forza Refresh</button>
+                        </div>
                         <span style="color: #bbb; font-size: 11px;">Ultimo aggiornamento: <b style="color: #fff">${timeStr}</b></span>
                     </div>
             `;
@@ -1081,7 +1090,6 @@
                     `;
                 });
 
-                // SE FASE 2 IN CORSO: MOSTRO IL CARICAMENTO
                 if (isSearchingBulk) {
                     tableHTML += `
                         <tr style="border-bottom: 1px dotted rgba(199, 125, 255, 0.4); background-color: rgba(199, 125, 255, 0.1);">
@@ -1109,7 +1117,7 @@
 
                 tableHTML += `</tbody></table></div>`;
             }
-            
+
             tableHTML += `</div>`;
         }
 
@@ -1118,6 +1126,42 @@
 
         const targetRow = remarksContainer.querySelector('.row.door-info__movmt-section-row') || remarksContainer;
         targetRow.appendChild(injectionDiv.firstElementChild);
+
+        // BIND DEL PULSANTE FORZA REFRESH
+        const refreshBtn = targetRow.querySelector('#tnt-force-refresh-btn');
+        if (refreshBtn && foundTrailerId && !refreshBtn.dataset.bound) {
+            refreshBtn.dataset.bound = "true";
+            refreshBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                console.log(`[YOS-SYNC] 🔄 Refresh Forzato per: ${foundTrailerId}`);
+
+                // 1. Rimuovi dalla cache definitiva
+                let cc = JSON.parse(GM_getValue('cons_completed_single_checks', '[]'));
+                cc = cc.filter(id => id !== foundTrailerId);
+                GM_setValue('cons_completed_single_checks', JSON.stringify(cc));
+
+                // 2. Rimuovi dalla lista delle chiusure tracciate (così lo ri-valuta e lo rimette dopo)
+                let rt = JSON.parse(GM_getValue('yos_ready_trailers_tracked', '[]'));
+                rt = rt.filter(id => id !== foundTrailerId);
+                GM_setValue('yos_ready_trailers_tracked', JSON.stringify(rt));
+
+                // 3. Spedisci in coda
+                let q = JSON.parse(GM_getValue('cons_single_check_queue', '[]'));
+                if (!q.includes(foundTrailerId)) {
+                    q.push(foundTrailerId);
+                    GM_setValue('cons_single_check_queue', JSON.stringify(q));
+                }
+
+                // 4. Forza la UI a mostrare il caricamento
+                remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
+                remarksContainer.querySelector('.tnt-cons-modal-injection').innerHTML = `
+                    <div style="margin-top: 20px; border-top: 1px solid #ff9800; padding-top: 20px; padding-bottom: 10px; width: 100%; text-align: center;">
+                        <strong class="yos-pulse-text" style="color: #ff9800; font-size: 15px; display: block;">⏳ REFRESH FORZATO IN CORSO...</strong>
+                        <span style="color: #999; font-size: 11px; display: block; margin-top: 5px;">Attendi i nuovi dati da CONS</span>
+                    </div>
+                `;
+            });
+        }
     }
 
     function injectIntoYosContainers() {
@@ -1153,43 +1197,75 @@
 
             if (!isZone300 && !isZone400) { if (customInfo) customInfo.remove(); return; }
 
-            const unitIdMatch = parentUnit.id.match(/unit_(\d+)/);
-            let trailerId = "";
-            if (unitIdMatch) {
-                const nameDiv = document.getElementById('unitname_' + unitIdMatch[1]);
-                if (nameDiv) trailerId = nameDiv.innerText.trim().toUpperCase();
-            }
-
-            const isReady = container.classList.contains('unit_ready_outline') && container.querySelector('.doorstatus-ready-loaded') !== null;
+            // LOGICA RICONOSCIMENTO CHIUSURA ALLARGATA (OR LOGIC)
+            const isReady = container.classList.contains('unit_ready_outline') ||
+                            container.querySelector('.doorstatus-ready-loaded') !== null ||
+                            container.outerHTML.toLowerCase().includes('blue');
 
             if (!container.dataset.clickTrackerBound) {
                 container.dataset.clickTrackerBound = "true";
 
                 container.addEventListener('click', function(e) {
-                    if (trailerId !== "") {
-                        GM_setValue('yos_last_clicked_trailer', trailerId);
+                    const pUnit = container.closest('[id^="unit_"]') || container.parentElement;
+                    if (pUnit) {
+                        const uMatch = pUnit.id.match(/unit_(\d+)/);
+                        if (uMatch) {
+                            const nDiv = document.getElementById('unitname_' + uMatch[1]);
+                            if (nDiv) GM_setValue('yos_last_clicked_trailer', nDiv.innerText.trim().toUpperCase());
+                        }
                     }
                 });
 
                 container.addEventListener('dblclick', function(e) {
-                    if (trailerId !== "") {
-                        GM_setValue('yos_last_clicked_trailer', trailerId);
-                        
-                        if (isReady && completedChecks.includes(trailerId)) {
-                            console.log(`[YOS-SYNC] ⚡ CACHE HIT CLICK: Trailer ${trailerId} già scansionato e cassa chiusa. Ricaricamento bloccato per velocità.`);
+                    let currentTrailerId = "";
+                    const pUnit = container.closest('[id^="unit_"]') || container.parentElement;
+                    if (pUnit) {
+                        const uMatch = pUnit.id.match(/unit_(\d+)/);
+                        if (uMatch) {
+                            const nDiv = document.getElementById('unitname_' + uMatch[1]);
+                            if (nDiv) currentTrailerId = nDiv.innerText.trim().toUpperCase();
+                        }
+                    }
+
+                    if (currentTrailerId !== "") {
+                        GM_setValue('yos_last_clicked_trailer', currentTrailerId);
+
+                        // SE LA CASSA E' CHIUSA (OPPURE LO STIAMO GIA FACENDO) NON FARE NIENTE AL DOPPIO CLICK
+                        let memChecks = [];
+                        try { memChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(err){}
+
+                        if (memChecks.includes(currentTrailerId)) {
+                            console.log(`[YOS-SYNC] ⚡ CACHE HIT DBLCLICK: Trailer ${currentTrailerId} chiuso e bloccato in memoria.`);
+                            e.stopPropagation(); // Mura il click
                             return;
+                        }
+
+                        // AGGIUNGE AL VOLO SEMBRA CHIUSA MA NON È IN MEMORIA
+                        if (isReady) {
+                            let rList = JSON.parse(GM_getValue('yos_ready_trailers_tracked', "[]"));
+                            if (!rList.includes(currentTrailerId)) {
+                                rList.push(currentTrailerId);
+                                GM_setValue('yos_ready_trailers_tracked', JSON.stringify(rList));
+                            }
                         }
 
                         let singleQueueStr = GM_getValue('cons_single_check_queue', "[]");
                         let singleQueue = [];
                         try { singleQueue = JSON.parse(singleQueueStr); } catch(err){}
 
-                        if (!singleQueue.includes(trailerId)) {
-                            singleQueue.push(trailerId);
+                        if (!singleQueue.includes(currentTrailerId)) {
+                            singleQueue.push(currentTrailerId);
                             GM_setValue('cons_single_check_queue', JSON.stringify(singleQueue));
                         }
                     }
                 });
+            }
+
+            let trailerId = "";
+            const unitIdMatch = parentUnit.id.match(/unit_(\d+)/);
+            if (unitIdMatch) {
+                const nameDiv = document.getElementById('unitname_' + unitIdMatch[1]);
+                if (nameDiv) trailerId = nameDiv.innerText.trim().toUpperCase();
             }
 
             if (!customInfo) {
@@ -1212,6 +1288,7 @@
                 container.appendChild(pieceBadge);
             }
 
+            // CARICAMENTO AUTO CHIUSURE
             if (isReady && trailerId !== "") {
                 let trackedStr = GM_getValue('yos_ready_trailers_tracked', "[]");
                 let queuedList = [];
