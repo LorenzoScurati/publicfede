@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.10.0
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.11.1
 // @namespace    http://tampermonkey.net/
-// @version      2.10.0
-// @description  FIX DEFINITIVO Cache Casse Chiuse (Double Click Murato), Forza Refresh Potenziato.
+// @version      2.11.1
+// @description  Rimozione TXT, Fix Memoria Casse Chiuse, Volume Audio 0.2%.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -28,7 +28,6 @@
     let initCountdown = 3;
 
     let completedSweeps = 0;
-    let activeTrailers = {};
 
     if (document.title.includes('CONS Maintenance')) {
         GM_setValue('cons_scan_state', 'STANDBY');
@@ -193,7 +192,7 @@
     }
 
     // ==========================================
-    // AUDIO WAKE LOCK
+    // AUDIO WAKE LOCK (Volume Sussurrato 0.2%)
     // ==========================================
     let audioCtx = null;
     let isAudioHumming = false;
@@ -208,7 +207,7 @@
             const wakeLockGain = audioCtx.createGain();
             wakeLockOsc.type = 'sine';
             wakeLockOsc.frequency.value = 30;
-            wakeLockGain.gain.value = 0.01;
+            wakeLockGain.gain.value = 0.002;
             wakeLockOsc.connect(wakeLockGain);
             wakeLockGain.connect(audioCtx.destination);
             wakeLockOsc.start();
@@ -222,7 +221,7 @@
                 pingOsc.frequency.value = 800;
 
                 pingGain.gain.setValueAtTime(0, audioCtx.currentTime);
-                pingGain.gain.linearRampToValueAtTime(0.015, audioCtx.currentTime + 0.02);
+                pingGain.gain.linearRampToValueAtTime(0.002, audioCtx.currentTime + 0.02);
                 pingGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
 
                 pingOsc.connect(pingGain);
@@ -232,7 +231,7 @@
             }, 5000);
 
             isAudioHumming = true;
-            console.log('[YOS-SYNC] 🎵 Sistema Audio attivato');
+            console.log('[YOS-SYNC] 🎵 Sistema Audio attivato a volume ridotto (0.2%)');
         } catch (e) {}
     }
 
@@ -433,14 +432,16 @@
     }, 1000);
 
     // ==========================================
-    // ESECUZIONE SINGOLO CHECK (PRIORITÀ)
+    // ESECUZIONE SINGOLO CHECK
     // ==========================================
     function finalizeSingleCheck(targetId, newRecords) {
-        activeTrailers[targetId] = newRecords;
-        GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
+        let freshTrailers = {};
+        try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
+
+        freshTrailers[targetId] = newRecords;
+        GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
         GM_setValue('cons_last_heartbeat', Date.now());
 
-        // SALVA IN CACHE SOLO SE LA CASSA E' CHIUSA (Tracking List)
         let trackedStr = GM_getValue('yos_ready_trailers_tracked', "[]");
         let readyList = [];
         try { readyList = JSON.parse(trackedStr); } catch(e){}
@@ -573,8 +574,11 @@
                                 return;
                             }
 
-                            activeTrailers[targetId] = [...newRecords];
-                            GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
+                            let freshTrailers = {};
+                            try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
+                            freshTrailers[targetId] = [...newRecords];
+                            GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
+
                             GM_setValue('cons_last_heartbeat', Date.now());
                             GM_setValue('cons_scan_state', 'SINGLE_CHECK_FASE2');
 
@@ -626,21 +630,16 @@
 
                                                             const consIdNode = row.querySelector('td.mat-column-consId');
                                                             const consId = consIdNode ? consIdNode.innerText.trim().toUpperCase() : '';
-
                                                             const assetIdNode = row.querySelector('td.mat-column-assetId');
                                                             const assetId = assetIdNode ? assetIdNode.innerText.trim().toUpperCase() : '';
-
                                                             const originNode = row.querySelector('td.mat-column-originLocCd') || row.querySelector('td.mat-column-origin');
                                                             const rawOrigin2 = originNode ? originNode.innerText.trim() : '';
                                                             const origin = translateLocID(rawOrigin2);
-
                                                             const destNode = row.querySelector('td.mat-column-destinationLocCd') || row.querySelector('td.mat-column-destination');
                                                             const rawDest2 = destNode ? destNode.innerText.trim() : '';
                                                             const destination = translateLocID(rawDest2);
-
                                                             const openNode = row.querySelector('td.mat-column-openDate') || row.querySelector('td.mat-column-openDt');
                                                             const openDate = openNode ? openNode.innerText.trim().replace(/\n/g, ' ') : '';
-
                                                             const closeNode = row.querySelector('td.mat-column-closeDate') || row.querySelector('td.mat-column-closeDt');
                                                             const closeDate = closeNode ? closeNode.innerText.trim().replace(/\n/g, ' ') : '';
 
@@ -768,6 +767,9 @@
         const isNextDisabled = nextBtn.disabled || nextBtn.hasAttribute('disabled') || nextBtn.classList.contains('mat-button-disabled');
 
         if (!isRewinding) {
+            let freshTrailers = {};
+            try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
+
             const rows = document.querySelectorAll('tbody tr');
             rows.forEach(row => {
                 const tIdNode = row.querySelector('td.mat-column-trailerAssetId');
@@ -802,15 +804,15 @@
                     pieceCount = parseInt(pieceSpan.innerText.replace(/\D/g, ''), 10) || 0;
                 }
 
-                if (!activeTrailers[tId]) activeTrailers[tId] = [];
-                const isDuplicateConsId = activeTrailers[tId].some(r => r.consId === consId);
+                if (!freshTrailers[tId]) freshTrailers[tId] = [];
+                const isDuplicateConsId = freshTrailers[tId].some(r => r.consId === consId);
 
                 if (!isDuplicateConsId && consId !== '') {
-                    activeTrailers[tId].push({ state, assetId, unitType, pieceCount, consId, origin, destination, openDate, closeDate });
+                    freshTrailers[tId].push({ state, assetId, unitType, pieceCount, consId, origin, destination, openDate, closeDate });
                 }
             });
 
-            GM_setValue('cons_active_trailers', JSON.stringify(activeTrailers));
+            GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
             GM_setValue('cons_last_heartbeat', Date.now());
 
             if (!isNextDisabled) {
@@ -980,7 +982,6 @@
 
         if (!foundTrailerId && isInitialScanDone) return;
 
-        // CONTROLLO BLINDATO CACHE: Usa solo la memoria, ignora il DOM.
         const completedChecks = [];
         try { Object.assign(completedChecks, JSON.parse(GM_getValue('cons_completed_single_checks', '[]'))); } catch(e){}
 
@@ -988,7 +989,7 @@
             remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
 
             if (completedChecks.includes(foundTrailerId)) {
-                console.log(`[YOS-SYNC] ⚡ CACHE HIT MODAL: ${foundTrailerId} è in memoria definitiva. Nessun nuovo check.`);
+                console.log(`[YOS-SYNC] ⚡ CACHE HIT MODAL: ${foundTrailerId} è in memoria. Evito request a CONS.`);
             } else {
                 let singleQueueStr = GM_getValue('cons_single_check_queue', "[]");
                 let singleQueue = [];
@@ -1008,7 +1009,7 @@
 
         let isLoading = !isInitialScanDone || (currentHeartbeat <= triggerTime);
 
-        // SE E' CACHED, MOSTRA SUBITO SENZA LOADING
+        // SE LA CASSA E' IN MEMORIA, NON CARICARE NIENTE E MOSTRA I DATI
         if (completedChecks.includes(foundTrailerId)) {
             isLoading = false;
         }
@@ -1127,7 +1128,6 @@
         const targetRow = remarksContainer.querySelector('.row.door-info__movmt-section-row') || remarksContainer;
         targetRow.appendChild(injectionDiv.firstElementChild);
 
-        // BIND DEL PULSANTE FORZA REFRESH
         const refreshBtn = targetRow.querySelector('#tnt-force-refresh-btn');
         if (refreshBtn && foundTrailerId && !refreshBtn.dataset.bound) {
             refreshBtn.dataset.bound = "true";
@@ -1135,24 +1135,20 @@
                 e.preventDefault();
                 console.log(`[YOS-SYNC] 🔄 Refresh Forzato per: ${foundTrailerId}`);
 
-                // 1. Rimuovi dalla cache definitiva
                 let cc = JSON.parse(GM_getValue('cons_completed_single_checks', '[]'));
                 cc = cc.filter(id => id !== foundTrailerId);
                 GM_setValue('cons_completed_single_checks', JSON.stringify(cc));
 
-                // 2. Rimuovi dalla lista delle chiusure tracciate (così lo ri-valuta e lo rimette dopo)
                 let rt = JSON.parse(GM_getValue('yos_ready_trailers_tracked', '[]'));
                 rt = rt.filter(id => id !== foundTrailerId);
                 GM_setValue('yos_ready_trailers_tracked', JSON.stringify(rt));
 
-                // 3. Spedisci in coda
                 let q = JSON.parse(GM_getValue('cons_single_check_queue', '[]'));
                 if (!q.includes(foundTrailerId)) {
                     q.push(foundTrailerId);
                     GM_setValue('cons_single_check_queue', JSON.stringify(q));
                 }
 
-                // 4. Forza la UI a mostrare il caricamento
                 remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
                 remarksContainer.querySelector('.tnt-cons-modal-injection').innerHTML = `
                     <div style="margin-top: 20px; border-top: 1px solid #ff9800; padding-top: 20px; padding-bottom: 10px; width: 100%; text-align: center;">
@@ -1197,7 +1193,6 @@
 
             if (!isZone300 && !isZone400) { if (customInfo) customInfo.remove(); return; }
 
-            // LOGICA RICONOSCIMENTO CHIUSURA ALLARGATA (OR LOGIC)
             const isReady = container.classList.contains('unit_ready_outline') ||
                             container.querySelector('.doorstatus-ready-loaded') !== null ||
                             container.outerHTML.toLowerCase().includes('blue');
@@ -1230,17 +1225,15 @@
                     if (currentTrailerId !== "") {
                         GM_setValue('yos_last_clicked_trailer', currentTrailerId);
 
-                        // SE LA CASSA E' CHIUSA (OPPURE LO STIAMO GIA FACENDO) NON FARE NIENTE AL DOPPIO CLICK
                         let memChecks = [];
                         try { memChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(err){}
 
+                        // NON USIAMO PIU' e.stopPropagation(). Lasciamo aprire YOS liberamente!
                         if (memChecks.includes(currentTrailerId)) {
                             console.log(`[YOS-SYNC] ⚡ CACHE HIT DBLCLICK: Trailer ${currentTrailerId} chiuso e bloccato in memoria.`);
-                            e.stopPropagation(); // Mura il click
                             return;
                         }
 
-                        // AGGIUNGE AL VOLO SEMBRA CHIUSA MA NON È IN MEMORIA
                         if (isReady) {
                             let rList = JSON.parse(GM_getValue('yos_ready_trailers_tracked', "[]"));
                             if (!rList.includes(currentTrailerId)) {
@@ -1288,7 +1281,6 @@
                 container.appendChild(pieceBadge);
             }
 
-            // CARICAMENTO AUTO CHIUSURE
             if (isReady && trailerId !== "") {
                 let trackedStr = GM_getValue('yos_ready_trailers_tracked', "[]");
                 let queuedList = [];
