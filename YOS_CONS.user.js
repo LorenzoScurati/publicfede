@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.13.0
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.11.1
 // @namespace    http://tampermonkey.net/
-// @version      2.13.0
-// @description  Stile bottoni laterali CB/SB identico a YOS nativo, Fix Memoria, Audio 0.2%.
+// @version      2.11.1
+// @description  Rimozione TXT, Fix Memoria Casse Chiuse, Volume Audio 0.2%.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -16,8 +16,8 @@
     'use strict';
 
     // STATO DEL SISTEMA
-    let isSystemStarted = false;
-    let isAutoScanActive = false;
+    let isSystemStarted = false; 
+    let isAutoScanActive = false; 
     let isManualModeActive = false;
     let isRewinding = false;
     let lastClickTime = 0;
@@ -25,10 +25,10 @@
     let isProcessingCommand = false;
     let isInitializing = false;
     let hasInitializedFilters = false;
-    let initCountdown = 3;
+    let initCountdown = 3; 
 
     let completedSweeps = 0;
-
+    
     if (document.title.includes('CONS Maintenance')) {
         GM_setValue('cons_scan_state', 'STANDBY');
     }
@@ -139,41 +139,15 @@
             100% { opacity: 1; }
         }
         .yos-pulse-text { animation: yos-pulse 1.5s infinite; }
-
+        
         #tnt-force-refresh-btn {
             margin-left: 15px; padding: 3px 10px; font-size: 11px; font-weight: bold;
-            background-color: #007bff; color: white; border: 1px solid #0056b3;
+            background-color: #007bff; color: white; border: 1px solid #0056b3; 
             border-radius: 4px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
             transition: background-color 0.2s;
         }
         #tnt-force-refresh-btn:hover { background-color: #0056b3; }
         #tnt-force-refresh-btn:active { transform: scale(0.95); }
-
-        /* CLONE STILE NATIVO YOS PER BOTTONI SIDEBAR */
-        .yos-custom-sidebar-btn {
-            width: 36px;
-            height: 36px;
-            margin: 12px auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #ffffff;
-            font-weight: bold;
-            font-family: Arial, Roboto, sans-serif;
-            font-size: 14px;
-            cursor: pointer;
-            border-radius: 8px;
-            background-color: #6e6e6e; /* Grigio interno clone */
-            border: 2px solid #8a8a8a; /* Bordino grigio clone */
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-            transition: all 0.2s ease-in-out;
-            box-sizing: border-box;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.5); /* Effetto testo marcato */
-        }
-        .yos-custom-sidebar-btn:hover {
-            background-color: #858585; /* Effetto hover più chiaro */
-            border-color: #a3a3a3;
-        }
     `;
     document.head.appendChild(style);
 
@@ -232,25 +206,24 @@
             const wakeLockOsc = audioCtx.createOscillator();
             const wakeLockGain = audioCtx.createGain();
             wakeLockOsc.type = 'sine';
-            wakeLockOsc.frequency.value = 30;
-            wakeLockGain.gain.value = 0.002;
+            wakeLockOsc.frequency.value = 30; 
+            wakeLockGain.gain.value = 0.002; 
             wakeLockOsc.connect(wakeLockGain);
             wakeLockGain.connect(audioCtx.destination);
             wakeLockOsc.start();
 
             setInterval(() => {
                 if (!isAutoScanActive || isManualModeActive) return;
-
+                
                 const pingOsc = audioCtx.createOscillator();
                 const pingGain = audioCtx.createGain();
                 pingOsc.type = 'sine';
-                pingOsc.frequency.value = 800;
-
-                // Volume impostato a 0.2% (sussurro leggerissimo)
+                pingOsc.frequency.value = 800; 
+                
                 pingGain.gain.setValueAtTime(0, audioCtx.currentTime);
-                pingGain.gain.linearRampToValueAtTime(0.002, audioCtx.currentTime + 0.02);
+                pingGain.gain.linearRampToValueAtTime(0.002, audioCtx.currentTime + 0.02); 
                 pingGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
-
+                
                 pingOsc.connect(pingGain);
                 pingGain.connect(audioCtx.destination);
                 pingOsc.start();
@@ -280,11 +253,11 @@
             const manualBtn = document.createElement('button');
             manualBtn.id = 'tnt-cons-manual-btn';
             manualBtn.className = 'cons-dash-btn';
-
+            
             const autoBtn = document.createElement('button');
             autoBtn.id = 'tnt-cons-autoscan-btn';
             autoBtn.className = 'cons-dash-btn';
-
+            
             const infoBox = document.createElement('div');
             infoBox.id = 'tnt-cons-timer-box';
             infoBox.className = 'cons-info-box';
@@ -308,11 +281,11 @@
                     startSystemLogic();
                     return;
                 }
-
+                
                 if (isManualModeActive) isManualModeActive = false;
 
                 if (!isAutoScanActive && completedSweeps >= 2) {
-                    startSystemLogic();
+                    startSystemLogic(); 
                     return;
                 }
 
@@ -342,7 +315,7 @@
             infoBox.innerHTML = "<span class='text-warning'>SISTEMA IN STANDBY</span>";
         } else {
             manualBtn.style.display = 'block';
-
+            
             if (isManualModeActive) {
                 manualBtn.innerHTML = '🛠️ Lavoro Manuale: ON';
                 manualBtn.style.background = '#dc3545';
@@ -352,7 +325,7 @@
             } else {
                 manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
                 manualBtn.style.background = '#6c757d';
-
+                
                 if (isInitializing) {
                     autoBtn.innerHTML = '⏳ Inizializzazione...';
                     autoBtn.style.background = '#ffc107';
@@ -384,12 +357,12 @@
         initCountdown = 3;
         completedSweeps = 0;
         lastClickTime = Date.now();
-
+        
         GM_setValue('cons_active_trailers', '{}');
-        GM_setValue('cons_completed_single_checks', '[]');
+        GM_setValue('cons_completed_single_checks', '[]'); 
         GM_setValue('cons_initial_scan_done', false);
         GM_setValue('cons_scan_state', 'RUNNING');
-
+        
         deepClearFilters();
     }
 
@@ -440,7 +413,7 @@
         if (document.title.includes('CONS Maintenance')) {
             if (GM_getValue('cons_hard_reset_command', false)) {
                 GM_setValue('cons_hard_reset_command', false);
-                startSystemLogic();
+                startSystemLogic(); 
             }
 
             if (isInitializing && hasInitializedFilters) {
@@ -459,12 +432,12 @@
     }, 1000);
 
     // ==========================================
-    // ESECUZIONE SINGOLO CHECK
+    // ESECUZIONE SINGOLO CHECK 
     // ==========================================
     function finalizeSingleCheck(targetId, newRecords) {
         let freshTrailers = {};
         try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
-
+        
         freshTrailers[targetId] = newRecords;
         GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
         GM_setValue('cons_last_heartbeat', Date.now());
@@ -491,7 +464,7 @@
             setTimeout(() => {
                 isProcessingCommand = false;
                 lastClickTime = Date.now();
-
+                
                 isAutoScanActive = false;
                 GM_setValue('cons_scan_state', 'PAUSED_POST_CHECK');
             }, 1000);
@@ -501,9 +474,9 @@
     function processSingleCheckQueue() {
         if (!GM_getValue('cons_initial_scan_done', false)) return false;
         if (isProcessingCommand) return true;
-
+        
         if (isManualModeActive) {
-            GM_setValue('cons_single_check_queue', '[]');
+            GM_setValue('cons_single_check_queue', '[]'); 
             return false;
         }
 
@@ -548,7 +521,7 @@
                     });
 
                     setTimeout(() => {
-
+                        
                         const executeFase1 = (isRetry) => {
                             let newRecords = [];
                             let targetDestRaw = null;
@@ -597,7 +570,7 @@
 
                             if (needsRetryForPieces) {
                                 console.log(`[YOS-SYNC] ⚠️ Colli vuoti, attesa extra per caricamento FedEx (2.5 sec)...`);
-                                setTimeout(() => executeFase1(true), 2500);
+                                setTimeout(() => executeFase1(true), 2500); 
                                 return;
                             }
 
@@ -605,7 +578,7 @@
                             try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
                             freshTrailers[targetId] = [...newRecords];
                             GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
-
+                            
                             GM_setValue('cons_last_heartbeat', Date.now());
                             GM_setValue('cons_scan_state', 'SINGLE_CHECK_FASE2');
 
@@ -685,14 +658,14 @@
 
                                                         finalizeSingleCheck(targetId, newRecords);
 
-                                                    }, 3000);
-                                                }, 2000);
-                                            }, 500);
-                                        }, 500);
+                                                    }, 3000); 
+                                                }, 2000); 
+                                            }, 500); 
+                                        }, 500); 
                                     } else {
                                         finalizeSingleCheck(targetId, newRecords);
                                     }
-                                }, 1000);
+                                }, 1000); 
                             } else {
                                 finalizeSingleCheck(targetId, newRecords);
                             }
@@ -700,9 +673,9 @@
 
                         executeFase1(false);
 
-                    }, 3000);
-                }, 2000);
-            }, 1500);
+                    }, 3000); 
+                }, 2000); 
+            }, 1500); 
         }, 800);
 
         return true;
@@ -713,7 +686,7 @@
     // ==========================================
     function checkPendingCommands() {
         if (isProcessingCommand) return true;
-
+        
         if (isManualModeActive) {
             GM_setValue('cons_pending_hours_command', null);
             GM_setValue('cons_pending_unittype_command', null);
@@ -764,13 +737,13 @@
         if (!document.title.includes('CONS Maintenance')) return;
         injectConsDashboard();
 
-        if (!isSystemStarted) return;
+        if (!isSystemStarted) return; 
 
         if (isInitializing) { runSetupSequence(); return; }
-
+        
         if (isManualModeActive) {
             GM_setValue('cons_single_check_queue', '[]');
-            return;
+            return; 
         }
 
         if (processSingleCheckQueue()) return;
@@ -779,12 +752,12 @@
 
         const loader = document.querySelector('mat-progress-spinner, .loader');
         if (loader && loader.offsetHeight > 0) return;
-
+        
         const rowsCheck = document.querySelectorAll('tbody tr');
         let hasAssets = Array.from(rowsCheck).some(r => r.querySelector('td.mat-column-trailerAssetId'));
-        let targetDelay = hasAssets ? 800 : 1300;
+        let targetDelay = hasAssets ? 800 : 1300; 
 
-        if (Date.now() - lastClickTime < targetDelay) return;
+        if (Date.now() - lastClickTime < targetDelay) return; 
 
         const prevBtn = document.querySelector('button[aria-label="Previous page"]');
         const nextBtn = document.querySelector('button[aria-label="Next page"]');
@@ -869,45 +842,6 @@
     // ==========================================
     // LOGICA YOS (Iniezione, Monitor & Control)
     // ==========================================
-
-    // NUOVA FUNZIONE: Inietta bottoni CB/SB clonati nella sidebar YOS
-    function injectYosSidebarButtons() {
-        if (!window.location.href.includes('hub-overview')) return;
-
-        const sidebar = document.querySelector('.cc-hub-menu-panel');
-        if (!sidebar) return;
-
-        if (!document.getElementById('tnt-sidebar-cb-btn')) {
-            const cbContainer = document.createElement('div');
-            cbContainer.style.position = 'relative';
-
-            const cbBtn = document.createElement('div');
-            cbBtn.id = 'tnt-sidebar-cb-btn';
-            cbBtn.className = 'yos-custom-sidebar-btn';
-            cbBtn.title = 'Custom Function CB';
-            cbBtn.innerText = 'CB';
-            cbBtn.onclick = () => { console.log('[YOS-SYNC] Pulsante CB cliccato'); };
-
-            cbContainer.appendChild(cbBtn);
-            sidebar.appendChild(cbContainer);
-        }
-
-        if (!document.getElementById('tnt-sidebar-sb-btn')) {
-            const sbContainer = document.createElement('div');
-            sbContainer.style.position = 'relative';
-
-            const sbBtn = document.createElement('div');
-            sbBtn.id = 'tnt-sidebar-sb-btn';
-            sbBtn.className = 'yos-custom-sidebar-btn';
-            sbBtn.title = 'Custom Function SB';
-            sbBtn.innerText = 'SB';
-            sbBtn.onclick = () => { console.log('[YOS-SYNC] Pulsante SB cliccato'); };
-
-            sbContainer.appendChild(sbBtn);
-            sidebar.appendChild(sbContainer);
-        }
-    }
-
     function renderYosRemoteControl() {
         if (!document.title.includes('CONS Maintenance')) {
             let controlPanel = document.getElementById('tnt-yos-remote-control');
@@ -979,7 +913,7 @@
             const scanState = GM_getValue('cons_scan_state', 'STANDBY');
 
             if (scanState === 'STANDBY' || lastHeartbeat === 0) {
-                statusBadge.style.backgroundColor = '#6c757d';
+                statusBadge.style.backgroundColor = '#6c757d'; 
                 textEl.innerText = '⚠️ PREMI START PER AVVIARE CONS';
             }
             else if (scanState === 'MANUAL_MODE') {
@@ -1053,7 +987,7 @@
 
         if (!remarksContainer.dataset.autoCheckTriggered) {
             remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
-
+            
             if (completedChecks.includes(foundTrailerId)) {
                 console.log(`[YOS-SYNC] ⚡ CACHE HIT MODAL: ${foundTrailerId} è in memoria. Evito request a CONS.`);
             } else {
@@ -1075,8 +1009,9 @@
 
         let isLoading = !isInitialScanDone || (currentHeartbeat <= triggerTime);
 
+        // SE LA CASSA E' IN MEMORIA, NON CARICARE NIENTE E MOSTRA I DATI
         if (completedChecks.includes(foundTrailerId)) {
-            isLoading = false;
+            isLoading = false; 
         }
 
         let tableHTML = '';
@@ -1098,7 +1033,7 @@
             `;
         } else {
             const records = currentConsTrailers[foundTrailerId] || [];
-
+            
             let d = new Date(currentHeartbeat);
             let timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + ':' + d.getSeconds().toString().padStart(2, '0');
 
@@ -1183,7 +1118,7 @@
 
                 tableHTML += `</tbody></table></div>`;
             }
-
+            
             tableHTML += `</div>`;
         }
 
@@ -1199,21 +1134,21 @@
             refreshBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 console.log(`[YOS-SYNC] 🔄 Refresh Forzato per: ${foundTrailerId}`);
-
+                
                 let cc = JSON.parse(GM_getValue('cons_completed_single_checks', '[]'));
                 cc = cc.filter(id => id !== foundTrailerId);
                 GM_setValue('cons_completed_single_checks', JSON.stringify(cc));
-
+                
                 let rt = JSON.parse(GM_getValue('yos_ready_trailers_tracked', '[]'));
                 rt = rt.filter(id => id !== foundTrailerId);
                 GM_setValue('yos_ready_trailers_tracked', JSON.stringify(rt));
-
+                
                 let q = JSON.parse(GM_getValue('cons_single_check_queue', '[]'));
                 if (!q.includes(foundTrailerId)) {
                     q.push(foundTrailerId);
                     GM_setValue('cons_single_check_queue', JSON.stringify(q));
                 }
-
+                
                 remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
                 remarksContainer.querySelector('.tnt-cons-modal-injection').innerHTML = `
                     <div style="margin-top: 20px; border-top: 1px solid #ff9800; padding-top: 20px; padding-bottom: 10px; width: 100%; text-align: center;">
@@ -1226,8 +1161,6 @@
     }
 
     function injectIntoYosContainers() {
-        injectYosSidebarButtons();
-
         const containers = document.querySelectorAll('div[id^="container_"]');
         if (containers.length === 0) return;
 
@@ -1260,7 +1193,7 @@
 
             if (!isZone300 && !isZone400) { if (customInfo) customInfo.remove(); return; }
 
-            const isReady = container.classList.contains('unit_ready_outline') ||
+            const isReady = container.classList.contains('unit_ready_outline') || 
                             container.querySelector('.doorstatus-ready-loaded') !== null ||
                             container.outerHTML.toLowerCase().includes('blue');
 
@@ -1288,13 +1221,14 @@
                             if (nDiv) currentTrailerId = nDiv.innerText.trim().toUpperCase();
                         }
                     }
-
+                    
                     if (currentTrailerId !== "") {
                         GM_setValue('yos_last_clicked_trailer', currentTrailerId);
-
+                        
                         let memChecks = [];
                         try { memChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(err){}
-
+                        
+                        // NON USIAMO PIU' e.stopPropagation(). Lasciamo aprire YOS liberamente!
                         if (memChecks.includes(currentTrailerId)) {
                             console.log(`[YOS-SYNC] ⚡ CACHE HIT DBLCLICK: Trailer ${currentTrailerId} chiuso e bloccato in memoria.`);
                             return;
