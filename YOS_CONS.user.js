@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.11.1
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.13.0
 // @namespace    http://tampermonkey.net/
-// @version      2.11.1
-// @description  Rimozione TXT, Fix Memoria Casse Chiuse, Volume Audio 0.2%.
+// @version      2.13.0
+// @description  Stile bottoni laterali CB/SB identico a YOS nativo, Fix Memoria, Audio 0.2%.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -148,6 +148,32 @@
         }
         #tnt-force-refresh-btn:hover { background-color: #0056b3; }
         #tnt-force-refresh-btn:active { transform: scale(0.95); }
+
+        /* CLONE STILE NATIVO YOS PER BOTTONI SIDEBAR */
+        .yos-custom-sidebar-btn {
+            width: 36px;
+            height: 36px;
+            margin: 12px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+            font-weight: bold;
+            font-family: Arial, Roboto, sans-serif;
+            font-size: 14px;
+            cursor: pointer;
+            border-radius: 8px;
+            background-color: #6e6e6e; /* Grigio interno clone */
+            border: 2px solid #8a8a8a; /* Bordino grigio clone */
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            transition: all 0.2s ease-in-out;
+            box-sizing: border-box;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5); /* Effetto testo marcato */
+        }
+        .yos-custom-sidebar-btn:hover {
+            background-color: #858585; /* Effetto hover più chiaro */
+            border-color: #a3a3a3;
+        }
     `;
     document.head.appendChild(style);
 
@@ -220,6 +246,7 @@
                 pingOsc.type = 'sine';
                 pingOsc.frequency.value = 800;
 
+                // Volume impostato a 0.2% (sussurro leggerissimo)
                 pingGain.gain.setValueAtTime(0, audioCtx.currentTime);
                 pingGain.gain.linearRampToValueAtTime(0.002, audioCtx.currentTime + 0.02);
                 pingGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
@@ -842,6 +869,45 @@
     // ==========================================
     // LOGICA YOS (Iniezione, Monitor & Control)
     // ==========================================
+
+    // NUOVA FUNZIONE: Inietta bottoni CB/SB clonati nella sidebar YOS
+    function injectYosSidebarButtons() {
+        if (!window.location.href.includes('hub-overview')) return;
+
+        const sidebar = document.querySelector('.cc-hub-menu-panel');
+        if (!sidebar) return;
+
+        if (!document.getElementById('tnt-sidebar-cb-btn')) {
+            const cbContainer = document.createElement('div');
+            cbContainer.style.position = 'relative';
+
+            const cbBtn = document.createElement('div');
+            cbBtn.id = 'tnt-sidebar-cb-btn';
+            cbBtn.className = 'yos-custom-sidebar-btn';
+            cbBtn.title = 'Custom Function CB';
+            cbBtn.innerText = 'CB';
+            cbBtn.onclick = () => { console.log('[YOS-SYNC] Pulsante CB cliccato'); };
+
+            cbContainer.appendChild(cbBtn);
+            sidebar.appendChild(cbContainer);
+        }
+
+        if (!document.getElementById('tnt-sidebar-sb-btn')) {
+            const sbContainer = document.createElement('div');
+            sbContainer.style.position = 'relative';
+
+            const sbBtn = document.createElement('div');
+            sbBtn.id = 'tnt-sidebar-sb-btn';
+            sbBtn.className = 'yos-custom-sidebar-btn';
+            sbBtn.title = 'Custom Function SB';
+            sbBtn.innerText = 'SB';
+            sbBtn.onclick = () => { console.log('[YOS-SYNC] Pulsante SB cliccato'); };
+
+            sbContainer.appendChild(sbBtn);
+            sidebar.appendChild(sbContainer);
+        }
+    }
+
     function renderYosRemoteControl() {
         if (!document.title.includes('CONS Maintenance')) {
             let controlPanel = document.getElementById('tnt-yos-remote-control');
@@ -1009,7 +1075,6 @@
 
         let isLoading = !isInitialScanDone || (currentHeartbeat <= triggerTime);
 
-        // SE LA CASSA E' IN MEMORIA, NON CARICARE NIENTE E MOSTRA I DATI
         if (completedChecks.includes(foundTrailerId)) {
             isLoading = false;
         }
@@ -1161,6 +1226,8 @@
     }
 
     function injectIntoYosContainers() {
+        injectYosSidebarButtons();
+
         const containers = document.querySelectorAll('div[id^="container_"]');
         if (containers.length === 0) return;
 
@@ -1228,7 +1295,6 @@
                         let memChecks = [];
                         try { memChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(err){}
 
-                        // NON USIAMO PIU' e.stopPropagation(). Lasciamo aprire YOS liberamente!
                         if (memChecks.includes(currentTrailerId)) {
                             console.log(`[YOS-SYNC] ⚡ CACHE HIT DBLCLICK: Trailer ${currentTrailerId} chiuso e bloccato in memoria.`);
                             return;
