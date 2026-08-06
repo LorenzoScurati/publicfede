@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YOS & CONS - Modulo CB (Check Bulk & EOPS)
 // @namespace    http://tampermonkey.net/
-// @version      3.6.0
+// @version      1.0
 // @description  Modulo On-Demand: UI Fix, Aggiunta Colli (Ordinati), e Sistema di Backup 24H.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
