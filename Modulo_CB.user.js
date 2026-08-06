@@ -9,6 +9,8 @@
 // @match        https://eops-lb-las.prod.cloud.fedex.com/*
 // @match        https://conser-lb-atl.prod.cloud.fedex.com:8134/*
 // @match        https://eai-5530-user-interface-prod.app.paas.fedex.com/*
+// @updateURL    https://raw.githubusercontent.com/LorenzoScurati/publicfede/main/Modulo_CB.user.js
+// @downloadURL  https://raw.githubusercontent.com/LorenzoScurati/publicfede/main/Modulo_CB.user.js
 // @grant        GM_setValue
 // @grant        GM_getValue
 // ==/UserScript==
