@@ -1,11 +1,12 @@
 // ==UserScript==
-// @name         YOS & SPLUNK Sync Overlay - SIDEBAR INTEGRATION 2.1
+// @name         YOS & SPLUNK Sync Overlay - SIDEBAR INTEGRATION 2.2
 // @namespace    http://tampermonkey.net/
-// @version      2.1
-// @description  Pulsante "S" integrato e riprogettato per allinearsi alla UI di YOS. Prestazioni massimizzate.
+// @version      2.2
+// @description  Pulsante "S" integrato. Auto-login SSO Splunk in background tramite tab temporanea.
 // @author       Lorenzo Scurati
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
 // @updateURL    https://raw.githubusercontent.com/LorenzoScurati/publicfede/main/YOS_CHUTE_SPLUNK.user.js
 // @downloadURL  https://raw.githubusercontent.com/LorenzoScurati/publicfede/main/YOS_CHUTE_SPLUNK.user.js
 // @grant        GM_cookie
@@ -25,15 +26,16 @@
         IS_YOS: window.location.hostname.includes("yos.apps.tnt.com"),
         REFRESH_UI_MS: 1000,
         REFRESH_API_MS: 30000,
+        SSO_TIMEOUT_MS: 15000, // Tempo (in millisecondi) per lasciar completare i redirect di login
         COLORS: {
-            CHUTE_MATCH: '#28a745',  // Verde plancia
-            CHUTE_THEORY: '#dc3545', // Rosso plancia
-            CHUTE_UNKNOWN: '#ffc107',// Giallo plancia
-            BTN_OK: '#2E7D32',       // Verde scuro elegante (Material)
-            BTN_ERR: '#C62828',      // Rosso scuro elegante
-            BTN_WARN: '#555555',     // Grigio nativo YOS (quando è idle)
-            BTN_LOADING: '#D97706',  // Arancione scuro
-            ACCENT: '#8B5CF6'        // Viola in tinta con il bottone "SB" di YOS
+            CHUTE_MATCH: '#28a745',
+            CHUTE_THEORY: '#dc3545',
+            CHUTE_UNKNOWN: '#ffc107',
+            BTN_OK: '#2E7D32',
+            BTN_ERR: '#C62828',
+            BTN_WARN: '#555555',
+            BTN_LOADING: '#D97706',
+            ACCENT: '#8B5CF6'
         }
     };
 
@@ -50,11 +52,12 @@
 
     let splunkDestinationsSanitized = [];
     let statoAttuale = "Avvio in corso...";
+    let ssoTentatoOggi = false; // Flag per evitare loop di aperture infinite
 
     if (!CONFIG.IS_YOS) return;
 
     // ============================================================
-    // 2. INIEZIONE STILI CSS AVANZATI (Per UI fluida e integrata)
+    // 2. INIEZIONE STILI CSS AVANZATI
     // ============================================================
     function injectCustomCSS() {
         if (document.getElementById('tnt-splunk-styles')) return;
@@ -63,56 +66,38 @@
         style.textContent = `
             .yos-custom-s-btn {
                 display: flex; justify-content: center; align-items: center;
-                width: 42px; height: 42px; /* Stesse dimensioni di CB e SB */
-                border-radius: 8px;
+                width: 42px; height: 42px; border-radius: 8px;
                 font-weight: 700; font-size: 20px; color: white;
                 cursor: pointer; margin: 8px auto;
                 font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-                user-select: none;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+                user-select: none; box-shadow: 0 2px 4px rgba(0,0,0,0.4);
                 transition: transform 0.15s ease, filter 0.15s ease, background 0.3s ease;
             }
-            .yos-custom-s-btn:hover {
-                transform: scale(1.05);
-                filter: brightness(1.15);
-                box-shadow: 0 4px 8px rgba(0,0,0,0.5);
-            }
+            .yos-custom-s-btn:hover { transform: scale(1.05); filter: brightness(1.15); box-shadow: 0 4px 8px rgba(0,0,0,0.5); }
             .yos-splunk-popup {
                 display: none; position: absolute; left: 60px; top: -40px;
-                background: #252526; /* Grigio scuro stile VSCode/YOS */
-                border: 1px solid #444; border-radius: 10px;
-                padding: 18px; width: 250px; /* Più largo per leggibilità */
-                box-shadow: 0 10px 30px rgba(0,0,0,0.6);
-                z-index: 999999; color: #f2f2f2;
-                font-family: 'Segoe UI', Roboto, sans-serif;
+                background: #252526; border: 1px solid #444; border-radius: 10px;
+                padding: 18px; width: 250px; box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+                z-index: 999999; color: #f2f2f2; font-family: 'Segoe UI', Roboto, sans-serif;
             }
             .yos-splunk-popup-header {
                 font-size: 15px; font-weight: 700; color: ${CONFIG.COLORS.ACCENT};
                 border-bottom: 1px solid #444; padding-bottom: 8px; margin-bottom: 12px;
             }
-            .yos-splunk-status {
-                font-size: 13px; margin-bottom: 14px; color: #d4d4d4; line-height: 1.5;
-            }
+            .yos-splunk-status { font-size: 13px; margin-bottom: 14px; color: #d4d4d4; line-height: 1.5; }
             .yos-splunk-select {
-                width: 100%; padding: 10px; border-radius: 6px;
-                background: #1e1e1e; color: white; border: 1px solid #555;
-                margin-bottom: 14px; font-size: 13px; cursor: pointer;
-                outline: none; appearance: auto;
-                transition: border-color 0.2s;
+                width: 100%; padding: 10px; border-radius: 6px; background: #1e1e1e; color: white;
+                border: 1px solid #555; margin-bottom: 14px; font-size: 13px; cursor: pointer;
+                outline: none; appearance: auto; transition: border-color 0.2s;
             }
             .yos-splunk-select:focus { border-color: ${CONFIG.COLORS.ACCENT}; }
             .yos-splunk-force-btn {
                 width: 100%; padding: 10px; border: none; border-radius: 6px;
-                background: ${CONFIG.COLORS.ACCENT}; color: white;
-                cursor: pointer; font-weight: bold; font-size: 14px;
-                transition: background 0.2s ease, opacity 0.2s ease;
+                background: ${CONFIG.COLORS.ACCENT}; color: white; cursor: pointer;
+                font-weight: bold; font-size: 14px; transition: background 0.2s ease, opacity 0.2s ease;
             }
-            .yos-splunk-force-btn:hover:not(:disabled) {
-                background: #7C3AED; /* Tonalità di hover */
-            }
-            .yos-splunk-force-btn:disabled {
-                opacity: 0.5; cursor: not-allowed;
-            }
+            .yos-splunk-force-btn:hover:not(:disabled) { background: #7C3AED; }
+            .yos-splunk-force-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         `;
         document.head.appendChild(style);
     }
@@ -163,19 +148,14 @@
     }
 
     // ============================================================
-    // 4. MOTORE API SPLUNK (Rete & Dati)
+    // 4. MOTORE API & AUTO-LOGIN SSO
     // ============================================================
     function gmRequest(dettagli) {
         return new Promise((resolve, reject) => {
             if (typeof GM_xmlhttpRequest !== "function") return reject(new Error("GM_xmlhttpRequest non disponibile."));
             GM_xmlhttpRequest({
-                timeout: 60000,
-                anonymous: false,
-                withCredentials: true,
-                ...dettagli,
-                onload: resolve,
-                onerror: () => reject(new Error("Richiesta di rete bloccata.")),
-                ontimeout: () => reject(new Error("Timeout (60s)."))
+                timeout: 60000, anonymous: false, withCredentials: true, ...dettagli,
+                onload: resolve, onerror: () => reject(new Error("Rete bloccata.")), ontimeout: () => reject(new Error("Timeout (60s)."))
             });
         });
     }
@@ -191,6 +171,34 @@
         });
     }
 
+    // Apre Splunk di nascosto, aspetta il tempo di login e chiude
+    async function eseguiLoginAutomatico() {
+        return new Promise((resolve) => {
+            statoAttuale = `🔄 Autenticazione SSO (${CONFIG.SSO_TIMEOUT_MS/1000}s)...`;
+            updateIconStatus();
+
+            let authTab = null;
+            try {
+                // background tab
+                authTab = GM_openInTab(CONFIG.SPLUNK_HOST + "/en-US/app/launcher/home", { active: false, insert: true });
+            } catch (e) {
+                console.error("Popup bloccato dal browser. Consenti i popup per YOS.", e);
+                resolve(false);
+                return;
+            }
+
+            // Aspetta i secondi definiti e poi tenta di chiudere la tab
+            setTimeout(() => {
+                try {
+                    if (authTab && typeof authTab.close === 'function') {
+                        authTab.close();
+                    }
+                } catch(e) {} // Ignora se la tab è già chiusa dall'utente
+                resolve(true);
+            }, CONFIG.SSO_TIMEOUT_MS);
+        });
+    }
+
     async function pulisciJobSplunkVecchi(csrfInfo) {
         const headers = { "X-Requested-With": "XMLHttpRequest" };
         if (csrfInfo.valore) headers["X-Splunk-Form-Key"] = csrfInfo.valore;
@@ -202,21 +210,39 @@
         } catch (e) {}
     }
 
-    async function recuperaDatiDaSplunk() {
+    async function recuperaDatiDaSplunk(isRetry = false) {
+        let csrfInfo = await ottieniCsrfSplunk();
+
+        // LOGICA DI AUTO-LOGIN: Se non abbiamo il cookie, avvia la procedura in background
+        if (!csrfInfo.valore && !isRetry && !ssoTentatoOggi) {
+            ssoTentatoOggi = true;
+            await eseguiLoginAutomatico();
+            csrfInfo = await ottieniCsrfSplunk(); // Ricarichiamo il cookie dopo l'attesa
+        }
+
+        await pulisciJobSplunkVecchi(csrfInfo);
+
         const minuti = GM_getValue('splunk_api_minutes', "90");
         const querySplunk = getSplunkQuery(minuti);
         const corpo = `output_mode=json&search=${encodeURIComponent(querySplunk)}`;
-        const csrfInfo = await ottieniCsrfSplunk();
-        await pulisciJobSplunkVecchi(csrfInfo);
 
         const headers = { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" };
         if (csrfInfo.valore) headers["X-Splunk-Form-Key"] = csrfInfo.valore;
 
         const res = await gmRequest({ method: "POST", url: `${CONFIG.SPLUNK_HOST}/en-US/splunkd/__raw/services/search/jobs/export`, headers, data: corpo });
 
-        if (res.status === 401 || res.status === 403) throw new Error("Credenziali scadute. Loggati su Splunk.");
+        // Se l'API ci rimbalza (401/403 o pagina HTML di login) anche se avevamo il cookie
+        if (res.status === 401 || res.status === 403 || (res.responseText && res.responseText.trim().startsWith("<html"))) {
+            if (!isRetry && !ssoTentatoOggi) {
+                ssoTentatoOggi = true;
+                await eseguiLoginAutomatico();
+                return recuperaDatiDaSplunk(true); // Riprova in ricorsione una sola volta
+            } else {
+                throw new Error("SSO Fallito. Apri Splunk manualmente e riprova.");
+            }
+        }
+
         if (res.status < 200 || res.status >= 300) throw new Error(`Errore Server (${res.status})`);
-        if (res.responseText?.trim().startsWith("<html")) throw new Error("Sessione scaduta.");
 
         const destinazioniTrovate = [];
         let erroreSplunk = null;
@@ -244,6 +270,7 @@
         const uniqueDestinations = [...new Set(destinazioniTrovate)];
         splunkDestinationsSanitized = uniqueDestinations.map(sanitize);
         statoAttuale = `✅ OK: ${uniqueDestinations.length} rotte in ${minuti}m`;
+        ssoTentatoOggi = false; // Resetta il flag in caso di successo
     }
 
     // ============================================================
@@ -305,16 +332,16 @@
 
         if (statoAttuale.includes("✅ OK")) {
             btn.style.background = CONFIG.COLORS.BTN_OK;
-        } else if (statoAttuale.includes("Errore") || statoAttuale.includes("scaduta")) {
+        } else if (statoAttuale.includes("Errore") || statoAttuale.includes("Fallito")) {
             btn.style.background = CONFIG.COLORS.BTN_ERR;
-        } else if (statoAttuale.includes("Interrogazione") || statoAttuale.includes("Ricerca")) {
+        } else if (statoAttuale.includes("Interrogazione") || statoAttuale.includes("Ricerca") || statoAttuale.includes("SSO")) {
             btn.style.background = CONFIG.COLORS.BTN_LOADING;
         } else {
-            btn.style.background = CONFIG.COLORS.BTN_WARN; // Idle (grigio)
+            btn.style.background = CONFIG.COLORS.BTN_WARN;
         }
 
         if (forceBtn) {
-            const isWorking = statoAttuale.includes("Interrogazione") || statoAttuale.includes("Ricerca");
+            const isWorking = statoAttuale.includes("Interrogazione") || statoAttuale.includes("Ricerca") || statoAttuale.includes("SSO");
             forceBtn.disabled = isWorking;
             forceBtn.innerText = isWorking ? 'Attendere...' : 'Aggiorna Ora';
         }
@@ -377,13 +404,6 @@
         statoAttuale = "⏳ Interrogazione in corso...";
         updateIconStatus();
 
-        const slowTimer = setTimeout(() => {
-            if (statoAttuale === "⏳ Interrogazione in corso...") {
-                statoAttuale = "🔍 Ricerca Splunk (attendi)...";
-                updateIconStatus();
-            }
-        }, 8000);
-
         try {
             await recuperaDatiDaSplunk();
             applyYosSplunkColors();
@@ -391,7 +411,6 @@
             statoAttuale = `❌ Errore: ${e.message || "Sconosciuto"}`;
             console.error("[SPLUNK API SYNC ERROR]", e);
         } finally {
-            clearTimeout(slowTimer);
             updateIconStatus();
         }
     }
