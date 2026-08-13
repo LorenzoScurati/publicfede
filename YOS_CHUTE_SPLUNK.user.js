@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YOS & SPLUNK Sync Overlay - SIDEBAR INTEGRATION 9.8
 // @namespace    http://tampermonkey.net/
-// @version      8.0
+// @version      2.3
 // @description  Leggibilità Produttività migliorata, Turno resettato su AUTO all'avvio.
 // @author       Lorenzo Scurati
 // @match        *://*/*
