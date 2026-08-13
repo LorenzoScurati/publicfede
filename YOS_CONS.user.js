@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.11.1
+// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.11.6
 // @namespace    http://tampermonkey.net/
-// @version      2.11.1
-// @description  Rimozione TXT, Fix Memoria Casse Chiuse, Volume Audio 0.2%.
+// @version      2.11.2
+// @description  Fix Modalità Isolata (Cross-Domain via GM_setValue), impedito a YOS di isolarsi.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -15,9 +15,110 @@
 (function() {
     'use strict';
 
-    // STATO DEL SISTEMA
-    let isSystemStarted = false; 
-    let isAutoScanActive = false; 
+    // Rilevamento pagina corrente
+    const isConsPage = window.location.href.includes('dh-cons-maintenance') || (document.title && document.title.includes('CONS Maintenance'));
+    const isYosPage = window.location.href.includes('yos.apps.tnt.com');
+
+    // ==========================================
+    // MODALITÀ ISOLATA (Solo su CONS, Cross-Domain)
+    // ==========================================
+    if (isConsPage) {
+        // Legge se YOS ci ha mandato qui per isolare una specifica CONS
+        let pendingCons = GM_getValue('tnt_pending_isolated_cons', null);
+        if (pendingCons && window.location.href.includes(pendingCons)) {
+            sessionStorage.setItem('tnt_isolated_mode', 'true');
+            GM_setValue('tnt_pending_isolated_cons', null); // Consumato, così non isola altre schede
+        }
+
+        const isIsolatedMode = sessionStorage.getItem('tnt_isolated_mode') === 'true';
+
+        if (isIsolatedMode) {
+            console.log('[YOS-SYNC] 🛑 Modalità Isolata attivata. URL intatto. Script principale disattivato per questa scheda.');
+
+            if (!document.getElementById('tnt-isolated-badge')) {
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    #tnt-isolated-badge {
+                        position: fixed; top: 15px; left: 50%; transform: translateX(-50%);
+                        background: #673ab7; color: white; padding: 8px 20px; border-radius: 20px;
+                        font-family: Roboto, sans-serif; font-size: 14px; font-weight: bold;
+                        z-index: 999999; box-shadow: 0 4px 10px rgba(0,0,0,0.5); border: 2px solid #fff;
+                        pointer-events: none;
+                    }
+                    /* Nascondi forzatamente qualsiasi UI dello script normale */
+                    #tnt-cons-dashboard, #tnt-yos-bottom-container, #tnt-yos-remote-control { display: none !important; }
+                `;
+                document.head.appendChild(style);
+
+                const badge = document.createElement('div');
+                badge.id = 'tnt-isolated-badge';
+                badge.innerHTML = '🕵️ MODALITÀ ISOLATA: Solo Visualizzazione (Sync Disattivato)';
+
+                const waitForBody = setInterval(() => {
+                    if (document.body) {
+                        document.body.appendChild(badge);
+                        clearInterval(waitForBody);
+                    }
+                }, 100);
+
+                // Clicca in automatico "View" e ricarica i colli per non fartelo fare a mano
+// --- NUOVA LOGICA ANTI-LOOP PER MODALITÀ ISOLATA ---
+                // Creiamo un archivio (Set) nella memoria di Tampermonkey per ricordarci i CONS ID già cliccati
+                const clickTracker = new Set();
+
+                setInterval(() => {
+                    // 1. Clicca sui bottoni "View" (se i colli non sono stati ancora aperti)
+                    const viewBtns = document.querySelectorAll('button[title="Click to view piece count"]');
+                    viewBtns.forEach(btn => {
+                        const row = btn.closest('tr');
+                        if (!row) return;
+
+                        const consIdCell = row.querySelector('.mat-column-consId');
+                        const consId = consIdCell ? consIdCell.innerText.trim() : null;
+
+                        // Clicca solo se questo CONS ID non è ancora stato cliccato per il "view"
+                        if (consId && !clickTracker.has(consId + '_view')) {
+                            clickTracker.add(consId + '_view');
+                            btn.click();
+                        }
+                    });
+
+                    // 2. Clicca sulle icone viola di refresh
+                    const refreshPieceBtns = document.querySelectorAll('.piece-count-refresh');
+                    refreshPieceBtns.forEach(btn => {
+                        const row = btn.closest('tr');
+                        if (!row) return;
+
+                        const consIdCell = row.querySelector('.mat-column-consId');
+                        const consId = consIdCell ? consIdCell.innerText.trim() : null;
+
+                        // Clicca solo se questo CONS ID non è ancora stato aggiornato in questa sessione
+                        if (consId && !clickTracker.has(consId + '_refresh')) {
+                            clickTracker.add(consId + '_refresh'); // Salva in memoria!
+
+                            // Abbassa l'opacità per capire che lo script l'ha preso in carico
+                            btn.style.opacity = '0.4';
+                            btn.style.pointerEvents = 'none';
+
+                            // Forziamo il click sia sul contenitore che sull'icona nativa per sicurezza
+                            const icon = btn.querySelector('mat-icon');
+                            if (icon) icon.click();
+                            btn.click();
+                        }
+                    });
+                }, 1500);
+            }
+
+            // BLOCCA TOTALMENTE IL RESTO DELLO SCRIPT (Auto-scan ecc)
+            return;
+        }
+    }
+
+    // ==========================================
+    // STATO DEL SISTEMA (SCRIPT NORMALE)
+    // ==========================================
+    let isSystemStarted = false;
+    let isAutoScanActive = false;
     let isManualModeActive = false;
     let isRewinding = false;
     let lastClickTime = 0;
@@ -25,11 +126,11 @@
     let isProcessingCommand = false;
     let isInitializing = false;
     let hasInitializedFilters = false;
-    let initCountdown = 3; 
+    let initCountdown = 3;
 
     let completedSweeps = 0;
-    
-    if (document.title.includes('CONS Maintenance')) {
+
+    if (isConsPage) {
         GM_setValue('cons_scan_state', 'STANDBY');
     }
 
@@ -139,15 +240,16 @@
             100% { opacity: 1; }
         }
         .yos-pulse-text { animation: yos-pulse 1.5s infinite; }
-        
+
         #tnt-force-refresh-btn {
             margin-left: 15px; padding: 3px 10px; font-size: 11px; font-weight: bold;
-            background-color: #007bff; color: white; border: 1px solid #0056b3; 
+            background-color: #007bff; color: white; border: 1px solid #0056b3;
             border-radius: 4px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
             transition: background-color 0.2s;
         }
         #tnt-force-refresh-btn:hover { background-color: #0056b3; }
         #tnt-force-refresh-btn:active { transform: scale(0.95); }
+        .yos-clickable-cons:hover { color: #fff !important; text-shadow: 0 0 8px rgba(255,255,255,0.8); }
     `;
     document.head.appendChild(style);
 
@@ -206,24 +308,24 @@
             const wakeLockOsc = audioCtx.createOscillator();
             const wakeLockGain = audioCtx.createGain();
             wakeLockOsc.type = 'sine';
-            wakeLockOsc.frequency.value = 30; 
-            wakeLockGain.gain.value = 0.002; 
+            wakeLockOsc.frequency.value = 30;
+            wakeLockGain.gain.value = 0.002;
             wakeLockOsc.connect(wakeLockGain);
             wakeLockGain.connect(audioCtx.destination);
             wakeLockOsc.start();
 
             setInterval(() => {
                 if (!isAutoScanActive || isManualModeActive) return;
-                
+
                 const pingOsc = audioCtx.createOscillator();
                 const pingGain = audioCtx.createGain();
                 pingOsc.type = 'sine';
-                pingOsc.frequency.value = 800; 
-                
+                pingOsc.frequency.value = 800;
+
                 pingGain.gain.setValueAtTime(0, audioCtx.currentTime);
-                pingGain.gain.linearRampToValueAtTime(0.002, audioCtx.currentTime + 0.02); 
+                pingGain.gain.linearRampToValueAtTime(0.002, audioCtx.currentTime + 0.02);
                 pingGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
-                
+
                 pingOsc.connect(pingGain);
                 pingGain.connect(audioCtx.destination);
                 pingOsc.start();
@@ -243,7 +345,7 @@
     // UI: CONS MAINTENANCE
     // ==========================================
     function injectConsDashboard() {
-        if (!document.title.includes('CONS Maintenance')) return;
+        if (!isConsPage) return;
 
         let dashboard = document.getElementById('tnt-cons-dashboard');
         if (!dashboard) {
@@ -253,11 +355,11 @@
             const manualBtn = document.createElement('button');
             manualBtn.id = 'tnt-cons-manual-btn';
             manualBtn.className = 'cons-dash-btn';
-            
+
             const autoBtn = document.createElement('button');
             autoBtn.id = 'tnt-cons-autoscan-btn';
             autoBtn.className = 'cons-dash-btn';
-            
+
             const infoBox = document.createElement('div');
             infoBox.id = 'tnt-cons-timer-box';
             infoBox.className = 'cons-info-box';
@@ -281,11 +383,11 @@
                     startSystemLogic();
                     return;
                 }
-                
+
                 if (isManualModeActive) isManualModeActive = false;
 
                 if (!isAutoScanActive && completedSweeps >= 2) {
-                    startSystemLogic(); 
+                    startSystemLogic();
                     return;
                 }
 
@@ -315,7 +417,7 @@
             infoBox.innerHTML = "<span class='text-warning'>SISTEMA IN STANDBY</span>";
         } else {
             manualBtn.style.display = 'block';
-            
+
             if (isManualModeActive) {
                 manualBtn.innerHTML = '🛠️ Lavoro Manuale: ON';
                 manualBtn.style.background = '#dc3545';
@@ -325,7 +427,7 @@
             } else {
                 manualBtn.innerHTML = '🛠️ Lavoro Manuale: OFF';
                 manualBtn.style.background = '#6c757d';
-                
+
                 if (isInitializing) {
                     autoBtn.innerHTML = '⏳ Inizializzazione...';
                     autoBtn.style.background = '#ffc107';
@@ -357,12 +459,12 @@
         initCountdown = 3;
         completedSweeps = 0;
         lastClickTime = Date.now();
-        
+
         GM_setValue('cons_active_trailers', '{}');
-        GM_setValue('cons_completed_single_checks', '[]'); 
+        GM_setValue('cons_completed_single_checks', '[]');
         GM_setValue('cons_initial_scan_done', false);
         GM_setValue('cons_scan_state', 'RUNNING');
-        
+
         deepClearFilters();
     }
 
@@ -410,10 +512,10 @@
     }
 
     setInterval(() => {
-        if (document.title.includes('CONS Maintenance')) {
+        if (isConsPage) {
             if (GM_getValue('cons_hard_reset_command', false)) {
                 GM_setValue('cons_hard_reset_command', false);
-                startSystemLogic(); 
+                startSystemLogic();
             }
 
             if (isInitializing && hasInitializedFilters) {
@@ -432,12 +534,12 @@
     }, 1000);
 
     // ==========================================
-    // ESECUZIONE SINGOLO CHECK 
+    // ESECUZIONE SINGOLO CHECK
     // ==========================================
     function finalizeSingleCheck(targetId, newRecords) {
         let freshTrailers = {};
         try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
-        
+
         freshTrailers[targetId] = newRecords;
         GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
         GM_setValue('cons_last_heartbeat', Date.now());
@@ -464,7 +566,7 @@
             setTimeout(() => {
                 isProcessingCommand = false;
                 lastClickTime = Date.now();
-                
+
                 isAutoScanActive = false;
                 GM_setValue('cons_scan_state', 'PAUSED_POST_CHECK');
             }, 1000);
@@ -474,9 +576,9 @@
     function processSingleCheckQueue() {
         if (!GM_getValue('cons_initial_scan_done', false)) return false;
         if (isProcessingCommand) return true;
-        
+
         if (isManualModeActive) {
-            GM_setValue('cons_single_check_queue', '[]'); 
+            GM_setValue('cons_single_check_queue', '[]');
             return false;
         }
 
@@ -521,7 +623,7 @@
                     });
 
                     setTimeout(() => {
-                        
+
                         const executeFase1 = (isRetry) => {
                             let newRecords = [];
                             let targetDestRaw = null;
@@ -570,7 +672,7 @@
 
                             if (needsRetryForPieces) {
                                 console.log(`[YOS-SYNC] ⚠️ Colli vuoti, attesa extra per caricamento FedEx (2.5 sec)...`);
-                                setTimeout(() => executeFase1(true), 2500); 
+                                setTimeout(() => executeFase1(true), 2500);
                                 return;
                             }
 
@@ -578,7 +680,7 @@
                             try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
                             freshTrailers[targetId] = [...newRecords];
                             GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
-                            
+
                             GM_setValue('cons_last_heartbeat', Date.now());
                             GM_setValue('cons_scan_state', 'SINGLE_CHECK_FASE2');
 
@@ -658,14 +760,14 @@
 
                                                         finalizeSingleCheck(targetId, newRecords);
 
-                                                    }, 3000); 
-                                                }, 2000); 
-                                            }, 500); 
-                                        }, 500); 
+                                                    }, 3000);
+                                                }, 2000);
+                                            }, 500);
+                                        }, 500);
                                     } else {
                                         finalizeSingleCheck(targetId, newRecords);
                                     }
-                                }, 1000); 
+                                }, 1000);
                             } else {
                                 finalizeSingleCheck(targetId, newRecords);
                             }
@@ -673,9 +775,9 @@
 
                         executeFase1(false);
 
-                    }, 3000); 
-                }, 2000); 
-            }, 1500); 
+                    }, 3000);
+                }, 2000);
+            }, 1500);
         }, 800);
 
         return true;
@@ -686,7 +788,7 @@
     // ==========================================
     function checkPendingCommands() {
         if (isProcessingCommand) return true;
-        
+
         if (isManualModeActive) {
             GM_setValue('cons_pending_hours_command', null);
             GM_setValue('cons_pending_unittype_command', null);
@@ -734,16 +836,16 @@
     }
 
     function scanConsMaintenance() {
-        if (!document.title.includes('CONS Maintenance')) return;
+        if (!isConsPage) return;
         injectConsDashboard();
 
-        if (!isSystemStarted) return; 
+        if (!isSystemStarted) return;
 
         if (isInitializing) { runSetupSequence(); return; }
-        
+
         if (isManualModeActive) {
             GM_setValue('cons_single_check_queue', '[]');
-            return; 
+            return;
         }
 
         if (processSingleCheckQueue()) return;
@@ -752,12 +854,12 @@
 
         const loader = document.querySelector('mat-progress-spinner, .loader');
         if (loader && loader.offsetHeight > 0) return;
-        
+
         const rowsCheck = document.querySelectorAll('tbody tr');
         let hasAssets = Array.from(rowsCheck).some(r => r.querySelector('td.mat-column-trailerAssetId'));
-        let targetDelay = hasAssets ? 800 : 1300; 
+        let targetDelay = hasAssets ? 800 : 1300;
 
-        if (Date.now() - lastClickTime < targetDelay) return; 
+        if (Date.now() - lastClickTime < targetDelay) return;
 
         const prevBtn = document.querySelector('button[aria-label="Previous page"]');
         const nextBtn = document.querySelector('button[aria-label="Next page"]');
@@ -843,7 +945,7 @@
     // LOGICA YOS (Iniezione, Monitor & Control)
     // ==========================================
     function renderYosRemoteControl() {
-        if (!document.title.includes('CONS Maintenance')) {
+        if (!isConsPage) {
             let controlPanel = document.getElementById('tnt-yos-remote-control');
             if (!controlPanel) {
                 controlPanel = document.createElement('div');
@@ -913,7 +1015,7 @@
             const scanState = GM_getValue('cons_scan_state', 'STANDBY');
 
             if (scanState === 'STANDBY' || lastHeartbeat === 0) {
-                statusBadge.style.backgroundColor = '#6c757d'; 
+                statusBadge.style.backgroundColor = '#6c757d';
                 textEl.innerText = '⚠️ PREMI START PER AVVIARE CONS';
             }
             else if (scanState === 'MANUAL_MODE') {
@@ -987,7 +1089,7 @@
 
         if (!remarksContainer.dataset.autoCheckTriggered) {
             remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
-            
+
             if (completedChecks.includes(foundTrailerId)) {
                 console.log(`[YOS-SYNC] ⚡ CACHE HIT MODAL: ${foundTrailerId} è in memoria. Evito request a CONS.`);
             } else {
@@ -1009,9 +1111,8 @@
 
         let isLoading = !isInitialScanDone || (currentHeartbeat <= triggerTime);
 
-        // SE LA CASSA E' IN MEMORIA, NON CARICARE NIENTE E MOSTRA I DATI
         if (completedChecks.includes(foundTrailerId)) {
-            isLoading = false; 
+            isLoading = false;
         }
 
         let tableHTML = '';
@@ -1033,7 +1134,7 @@
             `;
         } else {
             const records = currentConsTrailers[foundTrailerId] || [];
-            
+
             let d = new Date(currentHeartbeat);
             let timeStr = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + ':' + d.getSeconds().toString().padStart(2, '0');
 
@@ -1079,7 +1180,9 @@
                 trailers.forEach(r => {
                     tableHTML += `
                         <tr style="border-bottom: 1px dotted rgba(255, 152, 0, 0.4); color: #ff9800; line-height: 1.2;">
-                            <td style="padding: 2px 4px;">${r.consId}</td>
+                            <td style="padding: 2px 4px;">
+                                <span class="yos-clickable-cons" data-consid="${r.consId}" style="cursor: pointer; text-decoration: underline; font-weight: 900; color: inherit; transition: color 0.3s;" title="Copia ed espandi in scheda Isolata">${r.consId}</span>
+                            </td>
                             <td style="padding: 2px 4px;">${r.assetId}</td>
                             <td style="padding: 2px 4px;">${r.unitType}</td>
                             <td style="padding: 2px 4px;">${r.state}</td>
@@ -1103,7 +1206,9 @@
                     bulks.forEach(r => {
                         tableHTML += `
                             <tr style="border-bottom: 1px dotted rgba(199, 125, 255, 0.4); color: #c77dff; line-height: 1.2;">
-                                <td style="padding: 2px 4px;">${r.consId}</td>
+                                <td style="padding: 2px 4px;">
+                                    <span class="yos-clickable-cons" data-consid="${r.consId}" style="cursor: pointer; text-decoration: underline; font-weight: 900; color: inherit; transition: color 0.3s;" title="Copia ed espandi in scheda Isolata">${r.consId}</span>
+                                </td>
                                 <td style="padding: 2px 4px;">${r.assetId}</td>
                                 <td style="padding: 2px 4px;">${r.unitType}</td>
                                 <td style="padding: 2px 4px;">${r.state}</td>
@@ -1118,7 +1223,7 @@
 
                 tableHTML += `</tbody></table></div>`;
             }
-            
+
             tableHTML += `</div>`;
         }
 
@@ -1128,27 +1233,56 @@
         const targetRow = remarksContainer.querySelector('.row.door-info__movmt-section-row') || remarksContainer;
         targetRow.appendChild(injectionDiv.firstElementChild);
 
+        // Binding click eventi di Copia/Apri Modalità Isolata
+        const clickableConsElements = targetRow.querySelectorAll('.yos-clickable-cons');
+        clickableConsElements.forEach(el => {
+            if (!el.dataset.bound) {
+                el.dataset.bound = "true";
+                el.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const consId = el.dataset.consid;
+
+                    // Copia negli appunti
+                    navigator.clipboard.writeText(consId).then(() => {
+                        console.log(`[YOS-SYNC] 📋 CONS ID ${consId} copiato negli appunti.`);
+                        let oldColor = el.style.color;
+                        el.style.color = '#28a745';
+                        setTimeout(() => el.style.color = oldColor, 800);
+                    });
+
+                    // URL ASSOLUTAMENTE INCONTAMINATO
+                    const targetUrl = `https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/?hours=24&originLocCd=&destinationLocCd=&unitType=&positionState=&consId=${consId}&assetId=&trailerAssetId=&limit=25&offset=0&sortBy=openZDateTime&sortAsc=true&filterEmpty=`;
+
+                    // Salviamo su Tampermonkey che il prossimo link aperto con questo consId deve isolarsi
+                    GM_setValue('tnt_pending_isolated_cons', consId);
+
+                    window.open(targetUrl, '_blank');
+                });
+            }
+        });
+
         const refreshBtn = targetRow.querySelector('#tnt-force-refresh-btn');
         if (refreshBtn && foundTrailerId && !refreshBtn.dataset.bound) {
             refreshBtn.dataset.bound = "true";
             refreshBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 console.log(`[YOS-SYNC] 🔄 Refresh Forzato per: ${foundTrailerId}`);
-                
+
                 let cc = JSON.parse(GM_getValue('cons_completed_single_checks', '[]'));
                 cc = cc.filter(id => id !== foundTrailerId);
                 GM_setValue('cons_completed_single_checks', JSON.stringify(cc));
-                
+
                 let rt = JSON.parse(GM_getValue('yos_ready_trailers_tracked', '[]'));
                 rt = rt.filter(id => id !== foundTrailerId);
                 GM_setValue('yos_ready_trailers_tracked', JSON.stringify(rt));
-                
+
                 let q = JSON.parse(GM_getValue('cons_single_check_queue', '[]'));
                 if (!q.includes(foundTrailerId)) {
                     q.push(foundTrailerId);
                     GM_setValue('cons_single_check_queue', JSON.stringify(q));
                 }
-                
+
                 remarksContainer.dataset.autoCheckTriggered = Date.now().toString();
                 remarksContainer.querySelector('.tnt-cons-modal-injection').innerHTML = `
                     <div style="margin-top: 20px; border-top: 1px solid #ff9800; padding-top: 20px; padding-bottom: 10px; width: 100%; text-align: center;">
@@ -1193,7 +1327,7 @@
 
             if (!isZone300 && !isZone400) { if (customInfo) customInfo.remove(); return; }
 
-            const isReady = container.classList.contains('unit_ready_outline') || 
+            const isReady = container.classList.contains('unit_ready_outline') ||
                             container.querySelector('.doorstatus-ready-loaded') !== null ||
                             container.outerHTML.toLowerCase().includes('blue');
 
@@ -1221,14 +1355,13 @@
                             if (nDiv) currentTrailerId = nDiv.innerText.trim().toUpperCase();
                         }
                     }
-                    
+
                     if (currentTrailerId !== "") {
                         GM_setValue('yos_last_clicked_trailer', currentTrailerId);
-                        
+
                         let memChecks = [];
                         try { memChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(err){}
-                        
-                        // NON USIAMO PIU' e.stopPropagation(). Lasciamo aprire YOS liberamente!
+
                         if (memChecks.includes(currentTrailerId)) {
                             console.log(`[YOS-SYNC] ⚡ CACHE HIT DBLCLICK: Trailer ${currentTrailerId} chiuso e bloccato in memoria.`);
                             return;
