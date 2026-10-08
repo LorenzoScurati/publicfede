@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YOS Door Closure Badges
 // @namespace    http://tampermonkey.net/
-// @version      1.9
-// @description  Cache Live e chiusura baie. Badge: 400 e 700 sotto, 300 e 800 sopra. Scarico giallo escluso.
+// @version      1.11
+// @description  Cache Live e chiusura baie. Grigio solo giorno dopo, celeste stesso giorno. Verde giallo arancione accesi.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
@@ -98,12 +98,12 @@
             letter-spacing: -0.2px !important;
             text-shadow: 0 1px 1px rgba(0,0,0,0.45) !important;
         }
-        .yos-bg-nextday { background: #3d4246 !important; color: #f2f4f5 !important; }
-        .yos-bg-normal  { background: #0e6f86 !important; color: #ffffff !important; }
-        .yos-bg-warning { background: #ffc107 !important; color: #1b1b1b !important; }
-        .yos-bg-urgent  { background: #fd7e14 !important; color: #ffffff !important; }
-        .yos-bg-expired { background: #dc3545 !important; color: #ffffff !important; }
-        .yos-bg-closed  { background: #1e7e34 !important; color: #ffffff !important; }
+        .yos-bg-nextday { background: #4a5158 !important; color: #f4f6f8 !important; }
+        .yos-bg-normal  { background: #00c2e0 !important; color: #04181c !important; }
+        .yos-bg-warning { background: #ffe14a !important; color: #1a1400 !important; }
+        .yos-bg-urgent  { background: #ff7a00 !important; color: #1a0d00 !important; }
+        .yos-bg-expired { background: #ff2d3a !important; color: #ffffff !important; }
+        .yos-bg-closed  { background: #00e05a !important; color: #04210e !important; }
         /* Modale Tabelle */
         .yos-modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.75); z-index: 100000; display: flex; align-items: center; justify-content: center; font-family: sans-serif; }
         .yos-modal-content { background: #272828; color: #e3e3e3; width: 90%; max-width: 1250px; max-height: 85vh; border-radius: 8px; border: 1px solid #444; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
@@ -240,20 +240,14 @@
             if (isNaN(depH) || isNaN(depM)) return null;
             const now = new Date();
             let depDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), depH, depM, 0, 0);
-            let isDifferentDay = false;
             if (dateStr && dateStr.includes('-')) {
                 const [day, month] = dateStr.split('-').map(Number);
                 depDate.setMonth(month - 1, day);
-                if (day !== now.getDate() || (month - 1) !== now.getMonth()) {
-                    isDifferentDay = true;
-                }
-            } else {
-                if ((depDate.getTime() - now.getTime()) < -12 * 3600 * 1000) {
-                    depDate.setDate(depDate.getDate() + 1);
-                    isDifferentDay = true;
-                }
+            } else if ((depDate.getTime() - now.getTime()) < -12 * 3600 * 1000) {
+                depDate.setDate(depDate.getDate() + 1);
             }
             const closureDate = new Date(depDate.getTime() - (offsetMinutes * 60 * 1000));
+            const isDifferentDay = closureDate.getDate() !== now.getDate() || closureDate.getMonth() !== now.getMonth();
             const diffMinutes = Math.round((closureDate.getTime() - now.getTime()) / 60000);
             const closureH = String(closureDate.getHours()).padStart(2, '0');
             const closureM = String(closureDate.getMinutes()).padStart(2, '0');
@@ -397,10 +391,10 @@
             const data = scheduleMap[bayNum];
             let colorClass = 'yos-bg-normal';
             if (data.isManaged) colorClass = 'yos-bg-closed';
+            else if (data.isDifferentDay) colorClass = 'yos-bg-nextday';
             else if (data.minutesToClosure < 0) colorClass = 'yos-bg-expired';
             else if (data.minutesToClosure <= 30) colorClass = 'yos-bg-urgent';
             else if (data.minutesToClosure <= 60) colorClass = 'yos-bg-warning';
-            else if (data.isDifferentDay) colorClass = 'yos-bg-nextday';
 
             const positionClass = (bayInt >= 800 && bayInt <= 899) ? 'tnt-yos-above'
                 : (bayInt >= 700 && bayInt <= 799) ? 'tnt-yos-below'
