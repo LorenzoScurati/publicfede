@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YOS & CONS Sync Overlay (Zone 300/400/700/800) - PRO V2.12
 // @namespace    http://tampermonkey.net/
-// @version      2.12.2
-// @description  Sync CONS su YOS. 800 come 400, 700 come 300. Scarico giallo escluso.
+// @version      2.12.3
+// @description  Sync CONS su YOS. Apertura cassa senza richeck. Non azzera i pezzi gia letti.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -544,6 +544,15 @@
         let freshTrailers = {};
         try { freshTrailers = JSON.parse(GM_getValue('cons_active_trailers', '{}')); } catch(e){}
 
+        const previous = freshTrailers[targetId] || [];
+        const prevById = {};
+        previous.forEach(r => { if (r && r.consId) prevById[r.consId] = r; });
+        newRecords.forEach(r => {
+            const old = prevById[r.consId];
+            if (old && (r.pieceCount || 0) === 0 && (old.pieceCount || 0) > 0) {
+                r.pieceCount = old.pieceCount;
+            }
+        });
         freshTrailers[targetId] = newRecords;
         GM_setValue('cons_active_trailers', JSON.stringify(freshTrailers));
         GM_setValue('cons_last_heartbeat', Date.now());
@@ -1380,26 +1389,10 @@
                         let memChecks = [];
                         try { memChecks = JSON.parse(GM_getValue('cons_completed_single_checks', '[]')); } catch(err){}
 
+                        // Aprire la cassa non deve rilanciare il single check: è lento e
+                        // CONS spesso non ha ancora i colli, quindi sovrascriveva con 0.
                         if (memChecks.includes(currentTrailerId)) {
-                            console.log(`[YOS-SYNC] ⚡ CACHE HIT DBLCLICK: Trailer ${currentTrailerId} chiuso e bloccato in memoria.`);
-                            return;
-                        }
-
-                        if (isReady) {
-                            let rList = JSON.parse(GM_getValue('yos_ready_trailers_tracked', "[]"));
-                            if (!rList.includes(currentTrailerId)) {
-                                rList.push(currentTrailerId);
-                                GM_setValue('yos_ready_trailers_tracked', JSON.stringify(rList));
-                            }
-                        }
-
-                        let singleQueueStr = GM_getValue('cons_single_check_queue', "[]");
-                        let singleQueue = [];
-                        try { singleQueue = JSON.parse(singleQueueStr); } catch(err){}
-
-                        if (!singleQueue.includes(currentTrailerId)) {
-                            singleQueue.push(currentTrailerId);
-                            GM_setValue('cons_single_check_queue', JSON.stringify(singleQueue));
+                            console.log(`[YOS-SYNC] CACHE HIT DBLCLICK: Trailer ${currentTrailerId} gia in memoria.`);
                         }
                     }
                 });
