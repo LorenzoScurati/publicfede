@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YOS & CONS Sync Overlay (Zone 300/400) - PRO V2.11.6
+// @name         YOS & CONS Sync Overlay (Zone 300/400/700/800) - PRO V2.12
 // @namespace    http://tampermonkey.net/
-// @version      2.11.2
-// @description  Fix Modalità Isolata (Cross-Domain via GM_setValue), impedito a YOS di isolarsi.
+// @version      2.12.0
+// @description  Sync CONS su YOS anche baie 700/800. Spunte, pezzi e doppio click. Modalità isolata invariata.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -174,6 +174,8 @@
         }
         .yos-zone-400 { top: 18% !important; }
         .yos-zone-300 { top: 82% !important; }
+        .yos-zone-800 { top: 18% !important; }
+        .yos-zone-700 { top: 42% !important; }
 
         .yos-piece-count-badge {
             position: absolute; left: 50%;
@@ -185,6 +187,8 @@
         }
         .yos-pc-400 { top: 38%; transform: translateX(-50%); }
         .yos-pc-300 { top: 62%; transform: translate(-50%, -100%); }
+        .yos-pc-800 { top: 40%; transform: translateX(-50%); }
+        .yos-pc-700 { top: 68%; transform: translateX(-50%); }
 
         #tnt-cons-dashboard {
             position: fixed; bottom: 20px; left: 20px; z-index: 999999;
@@ -1316,7 +1320,10 @@
             if (!parentUnit) return;
 
             const text = parentUnit.innerText || '';
-            const bayMatch = text.match(/\b([1-6]\d\d)\b/);
+            const unitIdForBay = (parentUnit.id || '').match(/unit_(\d+)/);
+            const doorEl = unitIdForBay ? document.getElementById('container_' + unitIdForBay[1] + '_text') : null;
+            const doorText = doorEl ? (doorEl.innerText || '') : '';
+            const bayMatch = doorText.match(/\b([3-8]\d\d)\b/) || text.match(/\b([3-8]\d\d)\b/);
             let customInfo = container.querySelector('.yos-container-custom-info');
 
             if (!bayMatch) { if (customInfo) customInfo.remove(); return; }
@@ -1324,8 +1331,10 @@
             const bayNum = parseInt(bayMatch[1], 10);
             const isZone300 = bayNum >= 300 && bayNum <= 399;
             const isZone400 = bayNum >= 400 && bayNum <= 499;
+            const isZone700 = bayNum >= 700 && bayNum <= 799;
+            const isZone800 = bayNum >= 800 && bayNum <= 899;
 
-            if (!isZone300 && !isZone400) { if (customInfo) customInfo.remove(); return; }
+            if (!isZone300 && !isZone400 && !isZone700 && !isZone800) { if (customInfo) customInfo.remove(); return; }
 
             const isReady = container.classList.contains('unit_ready_outline') ||
                             container.querySelector('.doorstatus-ready-loaded') !== null ||
@@ -1401,6 +1410,8 @@
 
                 if (isZone400) customInfo.classList.add('yos-zone-400');
                 if (isZone300) customInfo.classList.add('yos-zone-300');
+                if (isZone800) customInfo.classList.add('yos-zone-800');
+                if (isZone700) customInfo.classList.add('yos-zone-700');
 
                 container.appendChild(customInfo);
             }
@@ -1411,6 +1422,8 @@
                 pieceBadge.className = 'yos-piece-count-badge';
                 if (isZone400) pieceBadge.classList.add('yos-pc-400');
                 if (isZone300) pieceBadge.classList.add('yos-pc-300');
+                if (isZone800) pieceBadge.classList.add('yos-pc-800');
+                if (isZone700) pieceBadge.classList.add('yos-pc-700');
                 container.appendChild(pieceBadge);
             }
 
