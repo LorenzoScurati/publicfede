@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YOS Door Closure Badges
 // @namespace    http://tampermonkey.net/
-// @version      1.11
+// @version      1.12
 // @description  Cache Live e chiusura baie. Grigio solo giorno dopo, celeste stesso giorno. Verde giallo arancione accesi.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
@@ -74,6 +74,8 @@
         #tnt-yos-status-indicator { background: #18191a; color: #28a745; border: 1px solid #28a745; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: bold; font-family: sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 8px; pointer-events: none; }
         #tnt-yos-status-indicator .dot { width: 10px; height: 10px; background-color: #28a745; border-radius: 50%; box-shadow: 0 0 8px #28a745; }
         /* 400 e 700 sotto la baia, 300 e 800 sopra */
+        .trailer_unit.door, .reverse_trailer_unit.door { position: relative; }
+        .trailer_unit.door:hover, .reverse_trailer_unit.door:hover { z-index: 400 !important; }
         .tnt-yos-close {
             position: absolute !important;
             left: 50% !important;
@@ -88,6 +90,12 @@
             text-align: center !important;
             line-height: 1 !important;
             white-space: nowrap !important;
+            transition: transform 0.12s ease !important;
+        }
+        .trailer_unit.door:hover .tnt-yos-close,
+        .reverse_trailer_unit.door:hover .tnt-yos-close {
+            z-index: 500 !important;
+            transform: translateX(-50%) scale(1.55) !important;
         }
         .tnt-yos-above { top: -30px !important; }
         .tnt-yos-below { bottom: -30px !important; }
