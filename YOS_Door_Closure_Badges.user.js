@@ -1,14 +1,15 @@
 // ==UserScript==
-// @name         YOS Door Closure Badges
+// @name         YOS Door Closure Badges + Scarico
 // @namespace    http://tampermonkey.net/
-// @version      1.12
-// @description  Cache Live e chiusura baie. Grigio solo giorno dopo, celeste stesso giorno. Verde giallo arancione accesi.
+// @version      1.13
+// @description  Cache Live e chiusura baie + cutoff scarico. Grigio solo giorno dopo, celeste stesso giorno. Verde giallo arancione accesi. Scarico: origine, categoria, ora.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
 // @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
 // @grant        none
 // ==/UserScript==
+
 (function () {
     'use strict';
     const TIME_WINDOW_MINUTES = 180;
@@ -16,13 +17,11 @@
     let lastUpdateStr = "In attesa dati...";
     let timeFilterApplied = false;
     let isVisuallyHidden = false;
-
     // Baie gialle = scarico (inbound), non carico. Restano fuori da questo script.
     // 719-728 IMPORT, 729-732 EXPORT, 815-818 EXPORT-CUSTOMER.
     function isScaricoBay(bayNum) {
         return (bayNum >= 719 && bayNum <= 732) || (bayNum >= 815 && bayNum <= 818);
     }
-
     function getZone(bayNum) {
         if (bayNum >= 300 && bayNum <= 399) return '300';
         if (bayNum >= 400 && bayNum <= 499) return '400';
@@ -30,7 +29,6 @@
         if (bayNum >= 800 && bayNum <= 899) return '800';
         return null;
     }
-
     // --- REGOLE CHIUSURA (Suddivise e commentate) ---
     const CLOSURE_RULES = {
         // 1. STANDARD (-20 MINUTI)
@@ -47,7 +45,6 @@
         // 4. ANTICIPO 2 ORE (120 MINUTI)
         'ZRH': 120, 'DZ5': 120, 'LUG': 120, 'KG4': 120
     };
-
     function getClosureOffsetMinutes(dest) {
         if (!dest) return 20;
         const clean = String(dest).split('+')[0].trim();
@@ -58,7 +55,6 @@
         }
         return 20;
     }
-
     // --- STILI CSS UNIFICATI ---
     const style = document.createElement('style');
     style.innerHTML = `
@@ -136,7 +132,6 @@
         .yos-btn-img { background: #17a2b8; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
     `;
     document.head.appendChild(style);
-
     // --- SETUP INTERFACCIA ---
     function initUI() {
         if (document.getElementById('tnt-yos-ui-container')) return;
@@ -171,7 +166,6 @@
         container.appendChild(exportBtn);
         document.body.appendChild(container);
     }
-
     // --- AGGIORNAMENTO STATO ---
     function updateStatusUI(isPanelOpen) {
         const statusText = document.getElementById('tnt-yos-status-text');
@@ -190,7 +184,6 @@
             indicator.style.borderColor = '#ff9800';
         }
     }
-
     // --- AUTOMAZIONE DATA E ORA SU 3 GIORNI (Ieri -> Domani) ---
     function fixDateTimeFilter() {
         const isPanelOpen = document.querySelector('app-outbound') !== null;
@@ -240,7 +233,6 @@
             }, 300);
         }
     }
-
     // --- FUNZIONE DI CALCOLO DINAMICA (Dal Dynamic Same-Day Fix) ---
     function getClosureDetails(dateStr, depTimeStr, offsetMinutes) {
         try {
@@ -264,7 +256,6 @@
             return null;
         }
     }
-
     function formatRemainingTime(minToClosure, isManaged) {
         if (isManaged) return 'CHIUSO';
         if (minToClosure < 0) return `${minToClosure} min (Scaduto)`;
@@ -275,11 +266,9 @@
         }
         return `${minToClosure} min`;
     }
-
     function readText(el) {
         return el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : '';
     }
-
     // --- LETTURA E AGGIORNAMENTO CACHE ---
     function updateCache() {
         const panel = document.querySelector('app-outbound');
@@ -297,21 +286,17 @@
                 const destText = readText(destEl);
                 const timeMatch = dateText.match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/) || (el.innerText || '').match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/);
                 if (!timeMatch) return;
-
                 const giorno = timeMatch[1];
                 const oraPartenza = timeMatch[2];
                 // 300 / 400 / 700 / 800. I parcheggi Pxxx restano fuori.
                 const bayMatch = doorText.match(/^(?:3\d\d|4\d\d|7\d\d|8\d\d)$/) || (el.innerText || '').match(/\b(3\d\d|4\d\d|7\d\d|8\d\d)\b/);
                 const isParking = /^P\d{3}$/i.test(doorText) || /\bP\d{3}\b/i.test(el.innerText || '');
                 if (!bayMatch || isParking) return;
-
                 const bay = bayMatch[1] || bayMatch[0];
                 const bayNum = parseInt(bay, 10);
                 if (isScaricoBay(bayNum)) return;
-
                 const zone = getZone(bayNum);
                 if (!zone) return;
-
                 let dest = destText && destText !== '-' ? destText : '-';
                 if (dest === '-') {
                     const parts = (el.innerText || '').split(/\s+|\t+/).filter(Boolean);
@@ -323,7 +308,6 @@
                         }
                     }
                 }
-
                 const isBlueManaged = el.querySelector('.highlight-task') !== null || el.classList.contains('highlight-task');
                 const closureOffset = getClosureOffsetMinutes(dest);
                 const closureInfo = getClosureDetails(giorno, oraPartenza, closureOffset);
@@ -346,7 +330,6 @@
                     isManaged: isBlueManaged, isUrgent, isImminent, isExpired, isWithin180Min, isDifferentDay
                 });
             });
-
             const uniqueItems = [];
             const map = new Map();
             for (const item of items) {
@@ -360,7 +343,6 @@
             lastUpdateStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
         }
     }
-
     function clearDoorMark(container) {
         container.querySelectorAll('.yos-door-badge, .tnt-yos-close').forEach(node => node.remove());
         const bg = container.querySelector('.docking_bg, .reverse_docking_bg');
@@ -369,7 +351,6 @@
             bg.style.removeProperty('--tnt-edge');
         }
     }
-
     // Orario dentro il trailer, sul lato dell'etichetta destinazione.
     // 800 (etichetta sotto): in basso sul trailer, lontano dalla targa.
     // 700 reverse (etichetta sopra): in alto sul trailer, lontano dalla targa.
@@ -390,12 +371,10 @@
             const bayInt = parseInt(bayNum, 10);
             const host = container.querySelector('.unit.container, .reverse_unit.container');
             const bg = container.querySelector('.docking_bg, .reverse_docking_bg');
-
             if (isScaricoBay(bayInt) || !scheduleMap[bayNum]) {
                 clearDoorMark(container);
                 return;
             }
-
             const data = scheduleMap[bayNum];
             let colorClass = 'yos-bg-normal';
             if (data.isManaged) colorClass = 'yos-bg-closed';
@@ -403,7 +382,6 @@
             else if (data.minutesToClosure < 0) colorClass = 'yos-bg-expired';
             else if (data.minutesToClosure <= 30) colorClass = 'yos-bg-urgent';
             else if (data.minutesToClosure <= 60) colorClass = 'yos-bg-warning';
-
             const positionClass = (bayInt >= 800 && bayInt <= 899) ? 'tnt-yos-above'
                 : (bayInt >= 700 && bayInt <= 799) ? 'tnt-yos-below'
                 : (bayInt >= 400 && bayInt <= 499) ? 'tnt-yos-below'
@@ -417,11 +395,9 @@
             container.appendChild(badge);
         });
     }
-
     // --- LOGICA MODALE PER ESPORTAZIONE DATI ---
     let activeZone = '400';
     const ZONES = ['400', '300', '700', '800'];
-
     function groupZoneItems(itemList, zone) {
         const filtered = itemList.filter(d => d.zone === zone);
         const byClose = (a, b) => a.minutesToClosure - b.minutesToClosure;
@@ -456,7 +432,6 @@
         }
         return [];
     }
-
     function buildAndShowModal() {
         if (globalOutboundCache.length === 0) {
             alert("Nessun dato! Assicurati di aprire il menu 'Outbound View' almeno una volta per dare inizio al caricamento.");
@@ -510,14 +485,12 @@
         document.getElementById('top-img-btn').onclick = generateImage; document.getElementById('bot-img-btn').onclick = generateImage;
         renderTableRows();
     }
-
     function updateTabStyles() {
         ZONES.forEach(z => {
             const el = document.getElementById(`tab-${z}`);
             if (el) el.className = `yos-tab-btn ${activeZone === z ? 'active' : ''}`;
         });
     }
-
     function renderTableRows() {
         const tbody = document.getElementById('yos-table-body');
         tbody.innerHTML = '';
@@ -561,7 +534,6 @@
         const selectAllCb = document.getElementById('yos-select-all');
         if (selectAllCb) selectAllCb.checked = allChecked;
     }
-
     function getSelectedData() {
         const selectedData = [];
         document.querySelectorAll('.yos-row-check').forEach(cb => {
@@ -573,7 +545,6 @@
         });
         return selectedData;
     }
-
     function downloadCSV() {
         const selectedData = getSelectedData();
         if (selectedData.length === 0) { alert('Seleziona almeno una riga da scaricare!'); return; }
@@ -587,7 +558,6 @@
         link.setAttribute('download', `Outbound_Zona_${activeZone}_${new Date().toISOString().slice(0,10)}.csv`);
         document.body.appendChild(link); link.click(); document.body.removeChild(link);
     }
-
     function generateImage() {
         const selectedData = getSelectedData();
         if (selectedData.length === 0) { alert('Seleziona almeno una riga da esportare!'); return; }
@@ -642,10 +612,284 @@
         const link = document.createElement('a'); link.download = `Outbound_Zona_${activeZone}_${String(new Date().getHours()).padStart(2, '0')}-${String(new Date().getMinutes()).padStart(2, '0')}.png`;
         link.href = canvas.toDataURL('image/png'); link.click();
     }
-
     // --- TIMERS ---
     setInterval(initUI, 1000);
     setInterval(fixDateTimeFilter, 1000);
     setInterval(updateCache, 1500);
     setInterval(processBadges, 2000);
+})();
+
+// --- YOS Scarico Chute Labels 1.4.0 (invariato) ---
+(function () {
+    'use strict';
+    const cacheMovimenti = new Map();
+    const CODICI_INTERNAZIONALI = new Set(['BCN', 'XXJ', 'LUG', 'MAD', 'HNJ', 'MRS', 'PRG', 'MV9', 'LYS', 'SKG', 'ATH', 'DFT', 'DFT*', 'DNG', 'DNG*', 'XWT', 'WA1', 'BZQ', 'QAR', 'IIM', 'LJU', 'ZRH', 'ECL', 'KCW']);
+    const MARGINE_DOM = 60;
+    const MARGINE_INT = 150;
+    const CATEGORIE = [
+        { nome: 'Import Prima', short: 'IMPORT', ore: 21, min: 30, codici: ['DNG', 'QAR', 'XWT', 'MAD', 'WA1', 'BZQ', 'MV9', 'BCN', 'DFT', 'MXP', 'XXJ'] },
+        { nome: 'Clienti Dom.', short: 'CLIENTI', ore: 21, min: 45, codici: ['AOS1', 'ESSENZ', 'SATCI', 'GAMESTOP', 'AT21', 'CEMB', 'RUBI', 'PJLO', 'COWA', 'HILT', 'INCO', 'PENT', 'LIVA', 'RUNN', 'PNT1', 'TRAS', 'COVD'] },
+        { nome: 'Filiali Sud', short: 'SUD', ore: 21, min: 45, codici: ['ISV', 'IOE', 'PRG'] },
+        { nome: 'Imp Down.', short: 'IMPORT', ore: 23, min: 45, codici: ['HNJ', 'DNG*', 'DFT*', 'BCN', 'ECL', 'LUG'] },
+        { nome: 'Mix Italia', short: 'MIX', ore: 23, min: 45, codici: ['CUF', 'OS3', 'IBU', 'IPO', 'ICM', 'RNV', 'ILJ', 'QVA', 'QAL', 'BEA', 'BRG', 'MZ1', 'GOA', 'OSO', 'B8Y', 'M1S', 'TO1', 'ZD1', 'MIL'] },
+        { nome: 'Filiali Exp.', short: 'EXPORT', ore: 1, min: 0, codici: ['VBS', 'MM1', 'VE1', 'IBD', 'REM', 'BO1', 'B7Q', 'QPA', 'VRN', 'MDA', 'PMF', 'IIM'] },
+        { nome: 'Clienti Int.', short: 'CLIENTI', ore: 1, min: 0, codici: ['GEWI', 'MASE', 'APLE', 'UFAL', 'GDEC'] },
+        { nome: 'Div 07', short: 'NORD', ore: 4, min: 0, codici: ['BRG', 'IPO', 'MZ1', 'IBU', 'TO1', 'MM1', 'VRN', 'VNZ', 'TV1', 'VE1'] },
+        { nome: 'Import Seconda', short: 'IMPORT', ore: 4, min: 0, codici: ['MV9', 'BCN', 'SKG', 'XWT', 'ATH', 'KCW'] },
+        { nome: 'Hub 07 Nord', short: 'HUB', ore: 5, min: 30, codici: ['BO2', 'PD2', 'FC5', 'PSA', 'ZRO', 'PSR', 'LJU'] },
+        { nome: 'Hub Exp/Sud', short: 'EXPORT', ore: 8, min: 50, codici: ['AN6', 'FIA', 'NC3', 'NT3', 'GDEC', 'COFR', 'UFAL', 'APLE'] },
+        { nome: 'Imp Anticipi', short: 'IMPORT', ore: 8, min: 50, codici: ['LYS', 'MRS', 'NT3', 'BA5'] }
+    ];
+    const CODE_SET = new Set(CATEGORIE.flatMap((c) => c.codici));
+    const GROUP_FALLBACK = { IMPORT: 'Import Prima', MIX: 'Mix Italia', EXPORT: 'Filiali Exp.', 'EXP+': 'Hub Exp/Sud' };
+    const style = document.createElement('style');
+    style.textContent = `
+        .trailer_unit.door, .reverse_trailer_unit.door { position: relative; }
+        .trailer_unit.door:hover, .reverse_trailer_unit.door:hover { z-index: 400 !important; }
+        .tnt-scarico-under {
+            position: absolute !important; left: 50% !important; transform: translateX(-50%) !important;
+            z-index: 90 !important; min-width: 52px !important; padding: 3px 6px !important;
+            border-radius: 5px !important; border: 2px dashed rgba(255,255,255,0.95) !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.7) !important; pointer-events: none !important;
+            text-align: center !important; line-height: 1.05 !important; white-space: nowrap !important;
+        }
+        .tnt-sc-above { top: -32px !important; }
+        .tnt-sc-below { bottom: -32px !important; }
+        .tnt-scarico-kind { display: block !important; font: 800 9px Roboto, sans-serif !important; }
+        .tnt-scarico-time { display: block !important; font: 800 14px Roboto, sans-serif !important; }
+        .tnt-scarico-vert {
+            position: absolute !important; left: 50% !important; top: 46% !important;
+            transform: translate(-50%, -50%) !important; z-index: 70 !important;
+            writing-mode: vertical-rl !important; font: 800 11px Roboto, sans-serif !important;
+            letter-spacing: 1px !important; color: #1a1400 !important;
+            background: rgba(255, 225, 74, 0.92) !important; border: 1px dashed #fff !important;
+            border-radius: 3px !important; padding: 4px 2px !important; pointer-events: none !important;
+        }
+        .trailer_unit.door:hover .tnt-scarico-under,
+        .reverse_trailer_unit.door:hover .tnt-scarico-under { z-index: 500 !important; transform: translateX(-50%) scale(1.4) !important; }
+        .tnt-sc-cyan { background: #00c2e0 !important; color: #04181c !important; }
+        .tnt-sc-yellow { background: #ffe14a !important; color: #1a1400 !important; }
+        .tnt-sc-orange { background: #ff7a00 !important; color: #1a0d00 !important; }
+        .tnt-sc-red { background: #ff2d3a !important; color: #fff !important; }
+        .tnt-sc-gray { background: #4a5158 !important; color: #f4f6f8 !important; }
+    `;
+    document.head.appendChild(style);
+    function readJson(key) {
+        try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { return null; }
+    }
+    function hydrateFromYosTool() {
+        const movimenti = readJson('tnt_cache_movimenti_per_unit_v1') || {};
+        Object.keys(movimenti).forEach((id) => {
+            const mov = movimenti[id];
+            if (!mov) return;
+            cacheMovimenti.set(String(id), { origin: mov.origin, dest: mov.destination || mov.dest, actualArrival: mov.actualArrival || mov.scheduleArrival || mov.estimatedArrival });
+        });
+    }
+    function storeMov(unitId, unitName, data) {
+        if (unitId) cacheMovimenti.set(String(unitId), data);
+        if (unitName) cacheMovimenti.set(String(unitName).trim(), data);
+    }
+    function parseXhrResponse(url, testo) {
+        try {
+            if (url && String(url).indexOf('dockingDoors') !== -1) {
+                const porte = JSON.parse(testo);
+                if (!Array.isArray(porte)) return;
+                const arrivi = readJson('tnt_arrivi_baia_scarico_v1') || {};
+                let changed = false;
+                porte.forEach((porta) => {
+                    const doorNumber = porta && porta.doorName;
+                    const unit = porta && porta.unitDTO;
+                    if (!doorNumber) return;
+                    if (porta.status !== 'OCCUPIED' || !unit) {
+                        if (arrivi[doorNumber]) { delete arrivi[doorNumber]; changed = true; }
+                        return;
+                    }
+                    const orario = unit.updatedDateTimestamp || unit.updatedDate || new Date().toISOString();
+                    if (!arrivi[doorNumber] || arrivi[doorNumber].unitId !== unit.unitId) {
+                        arrivi[doorNumber] = { unitId: unit.unitId, orario: orario };
+                        changed = true;
+                    }
+                    if (unit.unitName) storeMov(unit.unitId, unit.unitName, cacheMovimenti.get(String(unit.unitId)) || { origin: '', actualArrival: orario });
+                });
+                if (changed) localStorage.setItem('tnt_arrivi_baia_scarico_v1', JSON.stringify(arrivi));
+                return;
+            }
+            const dati = JSON.parse(testo);
+            if (Array.isArray(dati) && dati.length && dati[0].movementId) {
+                dati.forEach((mov) => {
+                    (mov.units || []).forEach((u) => {
+                        if (!u.unitId) return;
+                        storeMov(u.unitId, u.unitName, { origin: mov.origin, dest: mov.destination, actualArrival: mov.actualArrival || mov.scheduleArrival });
+                    });
+                });
+            }
+        } catch (e) {}
+    }
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url) { this._tntUrl = url; return origOpen.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function (body) {
+        this.addEventListener('load', function () { parseXhrResponse(this._tntUrl, this.responseText); });
+        return origSend.apply(this, arguments);
+    };
+    function isYellow(el) {
+        if (!el) return false;
+        const c = (el.style.backgroundColor || window.getComputedStyle(el).backgroundColor || '').replace(/\s/g, '');
+        return c === 'rgb(255,217,127)' || c === 'rgb(255,217,128)' || c === 'rgb(255,214,102)';
+    }
+    function isScaricoBay(bay, container) {
+        const known = (bay >= 101 && bay <= 114) || (bay >= 201 && bay <= 214)
+            || (bay >= 501 && bay <= 514) || (bay >= 601 && bay <= 614)
+            || (bay >= 719 && bay <= 732) || (bay >= 815 && bay <= 818);
+        if (known) return true;
+        const bg = container.querySelector('.docking_bg, .reverse_docking_bg');
+        if (!isYellow(bg)) return false;
+        return (bay >= 100 && bay <= 299) || (bay >= 500 && bay <= 699) || (bay >= 700 && bay <= 899);
+    }
+    function positionClass(bay) {
+        if ((bay >= 800 && bay <= 899) || (bay >= 100 && bay <= 199) || (bay >= 500 && bay <= 599)) return 'tnt-sc-above';
+        return 'tnt-sc-below';
+    }
+    function groupType(container, bay) {
+        const text = (container.innerText || '').toUpperCase();
+        if (text.includes('EXP+') || (bay >= 815 && bay <= 818)) return 'EXP+';
+        if (text.includes('EXPORT') || (bay >= 729 && bay <= 732)) return 'EXPORT';
+        if (text.includes('MIX') || (bay >= 725 && bay <= 728)) return 'MIX';
+        if (text.includes('IMPORT') || (bay >= 719 && bay <= 724)) return 'IMPORT';
+        return '';
+    }
+    function codeFromText(text) {
+        const parts = String(text || '').toUpperCase().split(/[^A-Z0-9*]+/);
+        return parts.find((p) => CODE_SET.has(p) || CODE_SET.has(p + '*')) || '';
+    }
+    function eOrarioDiChiusura(data) {
+        const minuti = data.getHours() * 60 + data.getMinutes();
+        if (data.getDay() === 6 && minuti >= 120) return true;
+        if (data.getDay() === 0 && minuti < 20 * 60 + 30) return true;
+        return false;
+    }
+    function calcolaCutoffInbound(codice, arrivo, arrivoPorta) {
+        const margine = CODICI_INTERNAZIONALI.has(codice) ? MARGINE_INT : MARGINE_DOM;
+        const candidati = CATEGORIE.filter((c) => c.codici.includes(codice));
+        if (!candidati.length || !arrivo) return null;
+        const choices = [];
+        candidati.forEach((cat) => {
+            for (let offset = -1; offset <= 5; offset++) {
+                const d = new Date(arrivo.getFullYear(), arrivo.getMonth(), arrivo.getDate() + offset, cat.ore, cat.min, 0, 0);
+                if (d.getTime() >= arrivo.getTime() && !eOrarioDiChiusura(d)) { choices.push({ cat, cutoffDate: d }); break; }
+            }
+        });
+        if (!choices.length) return null;
+        choices.sort((a, b) => a.cutoffDate - b.cutoffDate);
+        let risultato = choices[0];
+        for (let i = 0; i < choices.length; i++) {
+            if ((choices[i].cutoffDate - arrivo) / 60000 >= margine) { risultato = choices[i]; break; }
+        }
+        if (arrivoPorta && arrivoPorta > arrivo && (risultato.cutoffDate - arrivoPorta) / 60000 < margine) {
+            const base = risultato.cutoffDate;
+            for (let offset = 0; offset <= 5; offset++) {
+                const d = new Date(arrivoPorta.getFullYear(), arrivoPorta.getMonth(), arrivoPorta.getDate() + offset, risultato.cat.ore, risultato.cat.min, 0, 0);
+                if (d > base && (d - arrivoPorta) / 60000 >= margine && !eOrarioDiChiusura(d)) return { cat: risultato.cat, cutoffDate: d };
+            }
+        }
+        return risultato;
+    }
+    function parseWhen(value) {
+        if (!value) return null;
+        if (value instanceof Date) return value;
+        const text = String(value);
+        const full = text.match(/(\d{2})[\/\-](\d{2})(?:[\/\-]\d{2,4})?\s+(\d{2}):(\d{2})/);
+        const now = new Date();
+        if (full) return new Date(now.getFullYear(), Number(full[2]) - 1, Number(full[1]), Number(full[3]), Number(full[4]), 0, 0);
+        const iso = Date.parse(text);
+        if (!isNaN(iso)) return new Date(iso);
+        return null;
+    }
+    function harvestDom() {
+        document.querySelectorAll('.arrival_units').forEach((el) => {
+            const title = el.getAttribute('title') || '';
+            const originEl = el.querySelector('.inbound-origin-en-route, .inbound-origin');
+            const arrivalEl = el.querySelector('.arrival-time-en-route, .arrival-time');
+            if (!title || !originEl) return;
+            const parts = title.split('#');
+            const data = { origin: originEl.textContent.trim(), dest: 'IMR', actualArrival: arrivalEl ? arrivalEl.textContent.trim() : '' };
+            storeMov(parts[1], parts[0], data);
+        });
+    }
+    function lookup(container, bay) {
+        harvestDom();
+        const arrivi = readJson('tnt_arrivi_baia_scarico_v1') || {};
+        const nameEl = container.querySelector('.unit_name, .reverse_unit_name');
+        const assignEl = container.querySelector('[class*="assign_text"]');
+        const unitName = nameEl ? nameEl.textContent.trim() : '';
+        const arrivo = arrivi[String(bay)];
+        let mov = cacheMovimenti.get(unitName) || (arrivo && cacheMovimenti.get(String(arrivo.unitId))) || null;
+        const domCode = codeFromText(assignEl && assignEl.textContent) || codeFromText(container.innerText);
+        const origin = (mov && mov.origin) || domCode || '';
+        const arrival = parseWhen(mov && mov.actualArrival) || parseWhen(arrivo && arrivo.orario) || new Date();
+        const porta = parseWhen(arrivo && arrivo.orario);
+        return { origin, arrival, porta, unitName };
+    }
+    function colorClass(when) {
+        if (!when) return 'tnt-sc-gray';
+        const now = new Date();
+        const diff = Math.round((when.getTime() - now.getTime()) / 60000);
+        if (when.getDate() !== now.getDate() || when.getMonth() !== now.getMonth()) return 'tnt-sc-gray';
+        if (diff < 0) return 'tnt-sc-red';
+        if (diff <= 30) return 'tnt-sc-orange';
+        if (diff <= 60) return 'tnt-sc-yellow';
+        return 'tnt-sc-cyan';
+    }
+    function paint() {
+        hydrateFromYosTool();
+        document.querySelectorAll('.trailer_unit.door, .reverse_trailer_unit.door').forEach((container) => {
+            const doorNumEl = container.querySelector('.door_number, .reverse_door_number');
+            if (!doorNumEl) return;
+            const bayMatch = (doorNumEl.innerText || '').replace(/\s+/g, '').match(/^(1\d\d|2\d\d|5\d\d|6\d\d|7\d\d|8\d\d)$/);
+            if (!bayMatch) return;
+            const bay = parseInt(bayMatch[1], 10);
+            const oldUnder = container.querySelector('.tnt-scarico-under');
+            const oldVert = container.querySelector('.tnt-scarico-vert');
+            if (!isScaricoBay(bay, container)) {
+                if (oldUnder) oldUnder.remove();
+                if (oldVert) oldVert.remove();
+                return;
+            }
+            const info = lookup(container, bay);
+            const group = groupType(container, bay);
+            let label = group || 'SCARICO';
+            let when = null;
+            let title = info.unitName || 'senza cassa';
+            if (info.origin) {
+                const res = calcolaCutoffInbound(info.origin, info.arrival, info.porta);
+                if (res) {
+                    label = res.cat.short;
+                    when = res.cutoffDate;
+                    title = res.cat.nome + ' | ' + info.origin;
+                }
+            }
+            if (!when && group && GROUP_FALLBACK[group]) {
+                const cat = CATEGORIE.find((c) => c.nome === GROUP_FALLBACK[group]);
+                if (cat) {
+                    label = cat.short;
+                    when = new Date();
+                    when.setHours(cat.ore, cat.min, 0, 0);
+                    if (when.getTime() < Date.now() - 30 * 60000) when.setDate(when.getDate() + 1);
+                    title = cat.nome + ' | chute ' + group;
+                }
+            }
+            const time = when ? String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0') : '--:--';
+            let pill = oldUnder;
+            if (!pill) { pill = document.createElement('div'); container.appendChild(pill); }
+            pill.className = 'tnt-scarico-under ' + positionClass(bay) + ' ' + colorClass(when);
+            pill.innerHTML = '<span class="tnt-scarico-kind">' + label + '</span><span class="tnt-scarico-time">' + time + '</span>';
+            pill.title = title + ' | cutoff ' + time;
+            const host = container.querySelector('.unit.container, .reverse_unit.container') || container;
+            let tag = oldVert;
+            if (!tag) { tag = document.createElement('div'); tag.className = 'tnt-scarico-vert'; host.appendChild(tag); }
+            if (tag.textContent !== label) tag.textContent = label;
+        });
+    }
+    setInterval(paint, 2000);
+    setTimeout(paint, 800);
 })();
