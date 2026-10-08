@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YOS Door Closure Badges
 // @namespace    http://tampermonkey.net/
-// @version      1.8
-// @description  Cache Live e chiusura baie. Badge grande fuori baia: sopra sulle 800, sotto sulle 700. Scarico giallo escluso.
+// @version      1.9
+// @description  Cache Live e chiusura baie. Badge: 400 e 700 sotto, 300 e 800 sopra. Scarico giallo escluso.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
@@ -73,7 +73,7 @@
         #tnt-yos-toggle-btn:hover { background-color: #5a6268; }
         #tnt-yos-status-indicator { background: #18191a; color: #28a745; border: 1px solid #28a745; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: bold; font-family: sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 8px; pointer-events: none; }
         #tnt-yos-status-indicator .dot { width: 10px; height: 10px; background-color: #28a745; border-radius: 50%; box-shadow: 0 0 8px #28a745; }
-        /* Badge fuori dalla baia: 800 sopra, 700 sotto. Grande, ma non copre il trailer */
+        /* 400 e 700 sotto la baia, 300 e 800 sopra */
         .tnt-yos-close {
             position: absolute !important;
             left: 50% !important;
@@ -402,8 +402,10 @@
             else if (data.minutesToClosure <= 60) colorClass = 'yos-bg-warning';
             else if (data.isDifferentDay) colorClass = 'yos-bg-nextday';
 
-            const isReverse = container.classList.contains('reverse_trailer_unit') || bayInt >= 700 && bayInt <= 799;
-            const positionClass = (bayInt >= 800 && bayInt <= 899) ? 'tnt-yos-above' : (isReverse ? 'tnt-yos-below' : (bayInt >= 400 ? 'tnt-yos-below' : 'tnt-yos-above'));
+            const positionClass = (bayInt >= 800 && bayInt <= 899) ? 'tnt-yos-above'
+                : (bayInt >= 700 && bayInt <= 799) ? 'tnt-yos-below'
+                : (bayInt >= 400 && bayInt <= 499) ? 'tnt-yos-below'
+                : 'tnt-yos-above';
             container.querySelectorAll('.tnt-yos-close, .yos-door-badge').forEach(node => node.remove());
             const badge = document.createElement('div');
             badge.id = `tnt-yos-badge-${bayNum}`;
