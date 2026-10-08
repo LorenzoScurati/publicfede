@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         YOS & CONS Sync Overlay (Zone 300/400/700/800) - PRO V2.12
 // @namespace    http://tampermonkey.net/
-// @version      2.12.0
-// @description  Sync CONS su YOS anche baie 700/800. Spunte, pezzi e doppio click. Modalità isolata invariata.
+// @version      2.12.2
+// @description  Sync CONS su YOS. 800 come 400, 700 come 300. Scarico giallo escluso.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @match        https://dh-cons-maintenance-ui-production-directed-handling.fxi-001.fxi-prod.az.fxei.fedex.com/*
@@ -175,7 +175,7 @@
         .yos-zone-400 { top: 18% !important; }
         .yos-zone-300 { top: 82% !important; }
         .yos-zone-800 { top: 18% !important; }
-        .yos-zone-700 { top: 42% !important; }
+        .yos-zone-700 { top: 82% !important; }
 
         .yos-piece-count-badge {
             position: absolute; left: 50%;
@@ -187,8 +187,8 @@
         }
         .yos-pc-400 { top: 38%; transform: translateX(-50%); }
         .yos-pc-300 { top: 62%; transform: translate(-50%, -100%); }
-        .yos-pc-800 { top: 40%; transform: translateX(-50%); }
-        .yos-pc-700 { top: 68%; transform: translateX(-50%); }
+        .yos-pc-800 { top: 38%; transform: translateX(-50%); }
+        .yos-pc-700 { top: 62%; transform: translate(-50%, -100%); }
 
         #tnt-cons-dashboard {
             position: fixed; bottom: 20px; left: 20px; z-index: 999999;
@@ -1333,8 +1333,17 @@
             const isZone400 = bayNum >= 400 && bayNum <= 499;
             const isZone700 = bayNum >= 700 && bayNum <= 799;
             const isZone800 = bayNum >= 800 && bayNum <= 899;
+            const isScarico = (bayNum >= 719 && bayNum <= 732) || (bayNum >= 815 && bayNum <= 818);
+            const dockingBg = parentUnit.querySelector('.docking_bg, .reverse_docking_bg');
+            const bgColor = dockingBg ? (dockingBg.style.backgroundColor || '').replace(/\s/g, '') : '';
+            const isYellowUnload = bgColor === 'rgb(255,217,127)';
 
-            if (!isZone300 && !isZone400 && !isZone700 && !isZone800) { if (customInfo) customInfo.remove(); return; }
+            if (!isZone300 && !isZone400 && !isZone700 && !isZone800 || isScarico || isYellowUnload) {
+                if (customInfo) customInfo.remove();
+                const staleBadge = container.querySelector('.yos-piece-count-badge');
+                if (staleBadge) staleBadge.remove();
+                return;
+            }
 
             const isReady = container.classList.contains('unit_ready_outline') ||
                             container.querySelector('.doorstatus-ready-loaded') !== null ||
@@ -1407,25 +1416,21 @@
                 customInfo = document.createElement('div');
                 customInfo.id = 'tnt-custom-info-' + bayNum;
                 customInfo.className = 'yos-container-custom-info';
-
-                if (isZone400) customInfo.classList.add('yos-zone-400');
-                if (isZone300) customInfo.classList.add('yos-zone-300');
-                if (isZone800) customInfo.classList.add('yos-zone-800');
-                if (isZone700) customInfo.classList.add('yos-zone-700');
-
                 container.appendChild(customInfo);
             }
+            customInfo.classList.remove('yos-zone-300', 'yos-zone-400', 'yos-zone-700', 'yos-zone-800');
+            if (isZone400 || isZone800) customInfo.classList.add('yos-zone-400');
+            if (isZone300 || isZone700) customInfo.classList.add('yos-zone-300');
 
             let pieceBadge = container.querySelector('.yos-piece-count-badge');
             if (!pieceBadge) {
                 pieceBadge = document.createElement('div');
                 pieceBadge.className = 'yos-piece-count-badge';
-                if (isZone400) pieceBadge.classList.add('yos-pc-400');
-                if (isZone300) pieceBadge.classList.add('yos-pc-300');
-                if (isZone800) pieceBadge.classList.add('yos-pc-800');
-                if (isZone700) pieceBadge.classList.add('yos-pc-700');
                 container.appendChild(pieceBadge);
             }
+            pieceBadge.classList.remove('yos-pc-300', 'yos-pc-400', 'yos-pc-700', 'yos-pc-800');
+            if (isZone400 || isZone800) pieceBadge.classList.add('yos-pc-400');
+            if (isZone300 || isZone700) pieceBadge.classList.add('yos-pc-300');
 
             if (isReady && trailerId !== "") {
                 let trackedStr = GM_getValue('yos_ready_trailers_tracked', "[]");
