@@ -1,24 +1,35 @@
 // ==UserScript==
-// @name         YOS Door Closure Badges-TESTAAASAS
+// @name         YOS Door Closure Badges
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  Unione: Cache Live, UI compatta in basso, Auto-Time (Ieri-Domani) e calcolo accurato Same-Day Fix. Reso invisibile all'observer di YOS Tool.
+// @version      1.8
+// @description  Cache Live e chiusura baie. Badge grande fuori baia: sopra sulle 800, sotto sulle 700. Scarico giallo escluso.
 // @author       Lorenzo Scurati
 // @match        https://yos.apps.tnt.com/hub-overview*
 // @updateURL    https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
 // @downloadURL  https://raw.githubusercontent.com//LorenzoScurati/publicfede/main/YOS_Door_Closure_Badges.user.js
-
 // @grant        none
 // ==/UserScript==
-
 (function () {
     'use strict';
-
     const TIME_WINDOW_MINUTES = 180;
     let globalOutboundCache = [];
     let lastUpdateStr = "In attesa dati...";
     let timeFilterApplied = false;
     let isVisuallyHidden = false;
+
+    // Baie gialle = scarico (inbound), non carico. Restano fuori da questo script.
+    // 719-728 IMPORT, 729-732 EXPORT, 815-818 EXPORT-CUSTOMER.
+    function isScaricoBay(bayNum) {
+        return (bayNum >= 719 && bayNum <= 732) || (bayNum >= 815 && bayNum <= 818);
+    }
+
+    function getZone(bayNum) {
+        if (bayNum >= 300 && bayNum <= 399) return '300';
+        if (bayNum >= 400 && bayNum <= 499) return '400';
+        if (bayNum >= 700 && bayNum <= 799) return '700';
+        if (bayNum >= 800 && bayNum <= 899) return '800';
+        return null;
+    }
 
     // --- REGOLE CHIUSURA (Suddivise e commentate) ---
     const CLOSURE_RULES = {
@@ -27,24 +38,23 @@
         'PSA': 20, 'BA5': 20, 'TV1': 20, 'BO1': 20, 'QVA': 20, 'TO1': 20, 'ZD1': 20, 'IBU': 20, 'ICM': 20, 'IIM': 20,
         'VE1': 20, 'IBD': 20, 'QPA': 20, 'VNZ': 20, 'PMF': 20, 'IPO': 20, 'QPZ': 20, 'CUF': 20, 'AOT': 20, 'OSO': 20,
         'MIL': 20, 'RNV': 20, 'ILJ': 20, 'ISV': 20, 'BEA': 20, 'REM': 20, 'FCO': 20, 'MDA': 20, 'VRN': 20, 'MM1': 20,
-        'BRG': 20, 'VBS': 20, 'GOA': 20, 'MZ1': 20, 'OS3': 20, 'QAL': 20,
-
+        'BRG': 20, 'VBS': 20, 'GOA': 20, 'MZ1': 20, 'OS3': 20, 'QAL': 20, 'IOE': 20, 'MZ2': 20, 'MOL': 20, 'HN1': 20, 'BM': 20,
         // 2. ANTICIPO 40 MINUTI
         'ATH': 40, 'MRS': 40, 'XPI': 40, 'LYS': 40, 'MXP': 40, '06A': 40,
-
         // 3. ANTICIPO 1 ORA (60 MINUTI)
         'SKG': 60, 'MV9': 60, 'XWT': 60, 'KR9': 60, 'DNG': 60, 'HNJ': 60, 'QAR': 60, 'MAD': 60, 'WA1': 60, 'BCN': 60,
         'BZQ': 60, 'DFT': 60, 'Z8C': 20, '93A': 60,
-
         // 4. ANTICIPO 2 ORE (120 MINUTI)
         'ZRH': 120, 'DZ5': 120, 'LUG': 120, 'KG4': 120
     };
 
     function getClosureOffsetMinutes(dest) {
         if (!dest) return 20;
+        const clean = String(dest).split('+')[0].trim();
+        if (CLOSURE_RULES[clean] !== undefined) return CLOSURE_RULES[clean];
         if (CLOSURE_RULES[dest] !== undefined) return CLOSURE_RULES[dest];
         for (const key in CLOSURE_RULES) {
-            if (dest.startsWith(key)) return CLOSURE_RULES[key];
+            if (clean.startsWith(key)) return CLOSURE_RULES[key];
         }
         return 20;
     }
@@ -54,37 +64,52 @@
     style.innerHTML = `
         /* Trasparenza attiva che mantiene il DOM vivo */
         body.yos-hide-panel app-responsive-task-panel { opacity: 0 !important; pointer-events: none !important; transform: scale(0.01) !important; transform-origin: top left !important; position: fixed !important; z-index: -9999 !important; }
-
         /* Container UI in Basso a Sinistra - NOTA: Usiamo prefisso tnt-yos- per eludere il MutationObserver dell'altro script */
         #tnt-yos-ui-container { position: fixed; bottom: 20px; left: 20px; z-index: 999999; display: flex; flex-direction: column; gap: 10px; }
-
         .yos-btn { color: #fff; border: none; padding: 10px 16px; border-radius: 6px; font-weight: bold; font-size: 13px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: background-color 0.2s; text-align: left; }
         #tnt-yos-export-btn { background-color: #007bff; }
         #tnt-yos-export-btn:hover { background-color: #0056b3; }
         #tnt-yos-toggle-btn { background-color: #6c757d; }
         #tnt-yos-toggle-btn:hover { background-color: #5a6268; }
-
         #tnt-yos-status-indicator { background: #18191a; color: #28a745; border: 1px solid #28a745; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: bold; font-family: sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 8px; pointer-events: none; }
         #tnt-yos-status-indicator .dot { width: 10px; height: 10px; background-color: #28a745; border-radius: 50%; box-shadow: 0 0 8px #28a745; }
-
-        /* Badge Baie */
-        .yos-door-badge { position: absolute !important; left: 50% !important; z-index: 99999 !important; padding: 2px 4px !important; border-radius: 3px !important; font-size: 10px !important; font-weight: 700 !important; font-family: monospace; color: #ffffff !important; box-shadow: 0px 2px 4px rgba(0,0,0,0.6) !important; text-shadow: 1px 1px 1px rgba(0,0,0,0.9) !important; text-align: center !important; white-space: nowrap !important; pointer-events: none !important; border: 1px solid rgba(255,255,255,0.3) !important; line-height: 1.0 !important; }
-        .yos-badge-top { top: -20px !important; transform: translateX(-50%) !important; }
-        .yos-badge-bottom { bottom: -20px !important; transform: translateX(-50%) !important; }
-
-        .yos-bg-nextday { background-color: #5a6268 !important; color: #ffffff !important; }
-        .yos-bg-normal  { background-color: #17a2b8 !important; color: #ffffff !important; }
-        .yos-bg-warning { background-color: #ffc107 !important; color: #000000 !important; border-color: rgba(0,0,0,0.3) !important; text-shadow: none !important;}
-        .yos-bg-urgent  { background-color: #fd7e14 !important; color: #ffffff !important; }
-        .yos-bg-expired { background-color: #dc3545 !important; color: #ffffff !important; }
-        .yos-bg-closed  { background-color: #28a745 !important; color: #ffffff !important; }
-
+        /* Badge fuori dalla baia: 800 sopra, 700 sotto. Grande, ma non copre il trailer */
+        .tnt-yos-close {
+            position: absolute !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            z-index: 80 !important;
+            min-width: 52px !important;
+            padding: 4px 6px !important;
+            border-radius: 5px !important;
+            border: 2px solid rgba(255,255,255,0.9) !important;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.7) !important;
+            pointer-events: none !important;
+            text-align: center !important;
+            line-height: 1 !important;
+            white-space: nowrap !important;
+        }
+        .tnt-yos-above { top: -30px !important; }
+        .tnt-yos-below { bottom: -30px !important; }
+        .tnt-yos-time {
+            font-family: Roboto, sans-serif !important;
+            font-size: 15px !important;
+            font-weight: 800 !important;
+            letter-spacing: -0.2px !important;
+            text-shadow: 0 1px 1px rgba(0,0,0,0.45) !important;
+        }
+        .yos-bg-nextday { background: #3d4246 !important; color: #f2f4f5 !important; }
+        .yos-bg-normal  { background: #0e6f86 !important; color: #ffffff !important; }
+        .yos-bg-warning { background: #ffc107 !important; color: #1b1b1b !important; }
+        .yos-bg-urgent  { background: #fd7e14 !important; color: #ffffff !important; }
+        .yos-bg-expired { background: #dc3545 !important; color: #ffffff !important; }
+        .yos-bg-closed  { background: #1e7e34 !important; color: #ffffff !important; }
         /* Modale Tabelle */
         .yos-modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.75); z-index: 100000; display: flex; align-items: center; justify-content: center; font-family: sans-serif; }
         .yos-modal-content { background: #272828; color: #e3e3e3; width: 90%; max-width: 1250px; max-height: 85vh; border-radius: 8px; border: 1px solid #444; display: flex; flex-direction: column; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
         .yos-modal-header { padding: 15px 20px; background: #333435; border-bottom: 1px solid #444; display: flex; justify-content: space-between; align-items: center; }
         .yos-modal-header h3 { margin: 0; font-size: 16px; color: #fff; }
-        .yos-modal-tabs { display: flex; gap: 10px; padding: 10px 20px; background: #1e1e1e; border-bottom: 1px solid #444; align-items: center; }
+        .yos-modal-tabs { display: flex; gap: 10px; padding: 10px 20px; background: #1e1e1e; border-bottom: 1px solid #444; align-items: center; flex-wrap: wrap; }
         .yos-tab-btn { background: #3a3b3c; color: #ccc; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
         .yos-tab-btn.active { background: #007bff; color: #fff; font-weight: bold; }
         .yos-modal-body { padding: 15px; overflow-y: auto; flex: 1; }
@@ -107,14 +132,11 @@
     // --- SETUP INTERFACCIA ---
     function initUI() {
         if (document.getElementById('tnt-yos-ui-container')) return;
-
         const container = document.createElement('div');
         container.id = 'tnt-yos-ui-container';
-
         const indicator = document.createElement('div');
         indicator.id = 'tnt-yos-status-indicator';
         indicator.innerHTML = `<span class="dot" id="tnt-yos-dot"></span> <span id="tnt-yos-status-text">Attesa Outbound...</span>`;
-
         const toggleBtn = document.createElement('button');
         toggleBtn.id = 'tnt-yos-toggle-btn';
         toggleBtn.className = 'yos-btn';
@@ -131,13 +153,11 @@
                 toggleBtn.style.backgroundColor = '#6c757d';
             }
         };
-
         const exportBtn = document.createElement('button');
         exportBtn.id = 'tnt-yos-export-btn';
         exportBtn.className = 'yos-btn';
         exportBtn.innerHTML = '📊 Esporta Outbound';
         exportBtn.onclick = buildAndShowModal;
-
         container.appendChild(indicator);
         container.appendChild(toggleBtn);
         container.appendChild(exportBtn);
@@ -150,7 +170,6 @@
         const statusDot = document.getElementById('tnt-yos-dot');
         const indicator = document.getElementById('tnt-yos-status-indicator');
         if (!statusText) return;
-
         if (isPanelOpen) {
             statusText.innerText = `🟢 IN LETTURA (${globalOutboundCache.length} mezzi)`;
             statusDot.style.backgroundColor = '#28a745';
@@ -167,44 +186,34 @@
     // --- AUTOMAZIONE DATA E ORA SU 3 GIORNI (Ieri -> Domani) ---
     function fixDateTimeFilter() {
         const isPanelOpen = document.querySelector('app-outbound') !== null;
-
         if (!isPanelOpen) {
             timeFilterApplied = false;
             return;
         }
         if (timeFilterApplied) return;
-
         const calIcon = document.querySelector('.calendar-icon-image[src*="duration.svg"]');
         const applyBtn = Array.from(document.querySelectorAll('*')).find(el => el.textContent && el.textContent.trim() === 'APPLY DURATION' && el.children.length === 0);
-
         if (!applyBtn && calIcon) {
             calIcon.click();
             return;
         }
-
         if (applyBtn) {
             const popup = applyBtn.closest('.cdk-overlay-pane, .mat-dialog-container') || document.body;
             const textInputs = Array.from(popup.querySelectorAll('input[type="text"]'));
-
             const startTimeInput = popup.querySelector('input.start-time');
             const endTimeInput = popup.querySelector('input.end-time');
-
             let startDateInput = null;
             let endDateInput = null;
-
             for (let i = 0; i < textInputs.length; i++) {
                 if (textInputs[i] === startTimeInput && i > 0) startDateInput = textInputs[i - 1];
                 if (textInputs[i] === endTimeInput && i > 0) endDateInput = textInputs[i - 1];
             }
-
             const now = new Date();
             const dateIeri = new Date(now); dateIeri.setDate(now.getDate() - 1);
             const dateDomani = new Date(now); dateDomani.setDate(now.getDate() + 1);
-
             const formatD = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
             const strIeri = formatD(dateIeri);
             const strDomani = formatD(dateDomani);
-
             function setAngularVal(el, val) {
                 if (el && el.value !== val) {
                     el.value = val;
@@ -213,13 +222,10 @@
                     el.dispatchEvent(new Event('blur', { bubbles: true }));
                 }
             }
-
             setAngularVal(startDateInput, strIeri);
             setAngularVal(startTimeInput, '00:00');
-
             setAngularVal(endDateInput, strDomani);
             setAngularVal(endTimeInput, '23:59');
-
             setTimeout(() => {
                 applyBtn.click();
                 timeFilterApplied = true;
@@ -232,16 +238,12 @@
         try {
             const [depH, depM] = depTimeStr.split(':').map(Number);
             if (isNaN(depH) || isNaN(depM)) return null;
-
             const now = new Date();
             let depDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), depH, depM, 0, 0);
             let isDifferentDay = false;
-
             if (dateStr && dateStr.includes('-')) {
                 const [day, month] = dateStr.split('-').map(Number);
                 depDate.setMonth(month - 1, day);
-
-                // Check dinamico giorno successivo
                 if (day !== now.getDate() || (month - 1) !== now.getMonth()) {
                     isDifferentDay = true;
                 }
@@ -251,13 +253,10 @@
                     isDifferentDay = true;
                 }
             }
-
             const closureDate = new Date(depDate.getTime() - (offsetMinutes * 60 * 1000));
             const diffMinutes = Math.round((closureDate.getTime() - now.getTime()) / 60000);
-
             const closureH = String(closureDate.getHours()).padStart(2, '0');
             const closureM = String(closureDate.getMinutes()).padStart(2, '0');
-
             return { closureTimeStr: `${closureH}:${closureM}`, diffMinutes, isDifferentDay, minutesLeft: Math.round((depDate.getTime() - now.getTime()) / 60000) };
         } catch (e) {
             return null;
@@ -275,73 +274,77 @@
         return `${minToClosure} min`;
     }
 
+    function readText(el) {
+        return el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    }
+
     // --- LETTURA E AGGIORNAMENTO CACHE ---
     function updateCache() {
         const panel = document.querySelector('app-outbound');
         updateStatusUI(panel !== null);
-
         if (panel) {
             const items = [];
             const now = new Date();
-            const scheduledElements = document.querySelectorAll('outbound-scheduled, [id^="scheduled-tranport-unit"]');
-
+            const scheduledElements = panel.querySelectorAll('outbound-scheduled');
             scheduledElements.forEach(el => {
-                const text = el.innerText || '';
-                const timeMatch = text.match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/);
+                const dateEl = el.querySelector('.outbound-dates-position-change');
+                const doorEl = el.querySelector('.outbound-door-number');
+                const destEl = el.querySelector('.outbound-current-destination');
+                const dateText = readText(dateEl);
+                const doorText = readText(doorEl);
+                const destText = readText(destEl);
+                const timeMatch = dateText.match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/) || (el.innerText || '').match(/(\d{2}-\d{2})\s+(\d{2}:\d{2})/);
+                if (!timeMatch) return;
 
-                if (timeMatch) {
-                    const giorno = timeMatch[1];
-                    const oraPartenza = timeMatch[2];
-                    const bayMatch = text.match(/\b(3\d\d|4\d\d)\b/);
-                    const isParking = /\bP\d{3}\b/i.test(text);
+                const giorno = timeMatch[1];
+                const oraPartenza = timeMatch[2];
+                // 300 / 400 / 700 / 800. I parcheggi Pxxx restano fuori.
+                const bayMatch = doorText.match(/^(?:3\d\d|4\d\d|7\d\d|8\d\d)$/) || (el.innerText || '').match(/\b(3\d\d|4\d\d|7\d\d|8\d\d)\b/);
+                const isParking = /^P\d{3}$/i.test(doorText) || /\bP\d{3}\b/i.test(el.innerText || '');
+                if (!bayMatch || isParking) return;
 
-                    if (bayMatch && !isParking) {
-                        const bay = bayMatch[0];
-                        const bayNum = parseInt(bay, 10);
-                        const zone = bay.startsWith('3') ? '300' : '400';
+                const bay = bayMatch[1] || bayMatch[0];
+                const bayNum = parseInt(bay, 10);
+                if (isScaricoBay(bayNum)) return;
 
-                        let dest = '-';
-                        const parts = text.split(/\s+|\t+/).filter(Boolean);
-                        for (let p of parts) {
-                            p = p.trim();
-                            if (/^[A-Z0-9]{2,6}(\+[A-Z0-9]+)?$/.test(p) && p !== bay && /[A-Z]/.test(p) && !['OUTBOUND', 'SCHEDULED', 'ALLOCATED', 'LOCATION'].includes(p)) {
-                                dest = p;
-                                break;
-                            }
+                const zone = getZone(bayNum);
+                if (!zone) return;
+
+                let dest = destText && destText !== '-' ? destText : '-';
+                if (dest === '-') {
+                    const parts = (el.innerText || '').split(/\s+|\t+/).filter(Boolean);
+                    for (let p of parts) {
+                        p = p.trim();
+                        if (/^[A-Z0-9]{2,6}(\+[A-Z0-9]+)?$/.test(p) && p !== bay && /[A-Z]/.test(p) && !['OUTBOUND', 'SCHEDULED', 'ALLOCATED', 'LOCATION'].includes(p)) {
+                            dest = p;
+                            break;
                         }
-
-                        const isBlueManaged = el.querySelector('.highlight-task') !== null || el.classList.contains('highlight-task');
-                        const closureOffset = getClosureOffsetMinutes(dest);
-
-                        // Uso della logica avanzata (Dynamic Fix)
-                        const closureInfo = getClosureDetails(giorno, oraPartenza, closureOffset);
-
-                        let closureTimeStr = '-';
-                        let minutesToClosure = 999;
-                        let isDifferentDay = false;
-                        let isWithin180Min = false;
-
-                        if (closureInfo) {
-                            closureTimeStr = closureInfo.closureTimeStr;
-                            minutesToClosure = closureInfo.diffMinutes;
-                            isDifferentDay = closureInfo.isDifferentDay;
-                            isWithin180Min = closureInfo.minutesLeft >= 0 && closureInfo.minutesLeft <= TIME_WINDOW_MINUTES;
-                        }
-
-                        const isUrgent = !isBlueManaged && minutesToClosure <= 10 && minutesToClosure >= 0;
-                        const isImminent = !isBlueManaged && minutesToClosure > 10 && minutesToClosure <= 20;
-                        const isExpired = !isBlueManaged && minutesToClosure < 0;
-
-                        items.push({
-                            giorno, oraPartenza, dest, bay, bayNum, zone,
-                            minutesToClosure, closureTimeStr, closureOffset,
-                            isManaged: isBlueManaged, isUrgent, isImminent, isExpired, isWithin180Min, isDifferentDay
-                        });
                     }
                 }
+
+                const isBlueManaged = el.querySelector('.highlight-task') !== null || el.classList.contains('highlight-task');
+                const closureOffset = getClosureOffsetMinutes(dest);
+                const closureInfo = getClosureDetails(giorno, oraPartenza, closureOffset);
+                let closureTimeStr = '-';
+                let minutesToClosure = 999;
+                let isDifferentDay = false;
+                let isWithin180Min = false;
+                if (closureInfo) {
+                    closureTimeStr = closureInfo.closureTimeStr;
+                    minutesToClosure = closureInfo.diffMinutes;
+                    isDifferentDay = closureInfo.isDifferentDay;
+                    isWithin180Min = closureInfo.minutesLeft >= 0 && closureInfo.minutesLeft <= TIME_WINDOW_MINUTES;
+                }
+                const isUrgent = !isBlueManaged && minutesToClosure <= 10 && minutesToClosure >= 0;
+                const isImminent = !isBlueManaged && minutesToClosure > 10 && minutesToClosure <= 20;
+                const isExpired = !isBlueManaged && minutesToClosure < 0;
+                items.push({
+                    giorno, oraPartenza, dest, bay, bayNum, zone,
+                    minutesToClosure, closureTimeStr, closureOffset,
+                    isManaged: isBlueManaged, isUrgent, isImminent, isExpired, isWithin180Min, isDifferentDay
+                });
             });
 
-            // Elimina doppioni dalla scansione
             const uniqueItems = [];
             const map = new Map();
             for (const item of items) {
@@ -351,71 +354,101 @@
                     uniqueItems.push(item);
                 }
             }
-
             globalOutboundCache = uniqueItems;
             lastUpdateStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
         }
     }
 
-    // --- DISEGNO BADGE (Usa la cache e la logica unificata) ---
+    function clearDoorMark(container) {
+        container.querySelectorAll('.yos-door-badge, .tnt-yos-close').forEach(node => node.remove());
+        const bg = container.querySelector('.docking_bg, .reverse_docking_bg');
+        if (bg) {
+            bg.classList.remove('tnt-yos-dock');
+            bg.style.removeProperty('--tnt-edge');
+        }
+    }
+
+    // Orario dentro il trailer, sul lato dell'etichetta destinazione.
+    // 800 (etichetta sotto): in basso sul trailer, lontano dalla targa.
+    // 700 reverse (etichetta sopra): in alto sul trailer, lontano dalla targa.
     function processBadges() {
         const scheduleMap = {};
-        globalOutboundCache.forEach(d => scheduleMap[d.bay] = d);
-
-        const doorContainers = document.querySelectorAll('.trailer_unit.door, [id^="unit_"]');
-
+        globalOutboundCache.forEach(d => {
+            const prev = scheduleMap[d.bay];
+            if (!prev || d.minutesToClosure < prev.minutesToClosure) scheduleMap[d.bay] = d;
+        });
+        const doorContainers = document.querySelectorAll('.trailer_unit.door, .reverse_trailer_unit.door');
         doorContainers.forEach(container => {
-            const doorNumEl = container.querySelector('.door_number, [id*="container_"][id*="_text"]');
+            const doorNumEl = container.querySelector('.door_number, .reverse_door_number');
             if (!doorNumEl) return;
-
-            const bayText = doorNumEl.innerText.trim();
-            const bayMatch = bayText.match(/\b(3\d\d|4\d\d|5\d\d|6\d\d)\b/);
+            const bayText = doorNumEl.innerText.replace(/\s+/g, '').trim();
+            const bayMatch = bayText.match(/^(3\d\d|4\d\d|5\d\d|6\d\d|7\d\d|8\d\d)$/);
             if (!bayMatch) return;
+            const bayNum = bayMatch[1] || bayMatch[0];
+            const bayInt = parseInt(bayNum, 10);
+            const host = container.querySelector('.unit.container, .reverse_unit.container');
+            const bg = container.querySelector('.docking_bg, .reverse_docking_bg');
 
-            const bayNum = bayMatch[0];
-
-            if (scheduleMap[bayNum]) {
-                const data = scheduleMap[bayNum];
-                let colorClass = 'yos-bg-normal';
-
-                // Logica priorità colore unificata
-                if (data.isManaged) colorClass = 'yos-bg-closed';
-                else if (data.minutesToClosure < 0) colorClass = 'yos-bg-expired';
-                else if (data.minutesToClosure <= 30) colorClass = 'yos-bg-urgent';
-                else if (data.minutesToClosure <= 60) colorClass = 'yos-bg-warning';
-                else if (data.isDifferentDay) colorClass = 'yos-bg-nextday';
-                else colorClass = 'yos-bg-normal';
-
-                const isTopRow = parseInt(bayNum) >= 400;
-                const positionClass = isTopRow ? 'yos-badge-bottom' : 'yos-badge-top';
-
-                let badge = container.querySelector('.yos-door-badge');
-                if (!badge) {
-                    badge = document.createElement('div');
-                    badge.id = `tnt-yos-badge-${bayNum}`; // L'ID tnt- bypassa il MutationObserver del TOOL
-                    container.appendChild(badge);
-                }
-
-                badge.className = `yos-door-badge ${positionClass} ${colorClass}`;
-                badge.innerText = `🔒 ${data.closureTimeStr}`;
-                badge.title = `Baia ${bayNum} | Dest: ${data.dest || '-'} | Partenza: ${data.oraPartenza} | Chiusura: ${data.closureTimeStr} (-${data.closureOffset}m)`;
+            if (isScaricoBay(bayInt) || !scheduleMap[bayNum]) {
+                clearDoorMark(container);
+                return;
             }
+
+            const data = scheduleMap[bayNum];
+            let colorClass = 'yos-bg-normal';
+            if (data.isManaged) colorClass = 'yos-bg-closed';
+            else if (data.minutesToClosure < 0) colorClass = 'yos-bg-expired';
+            else if (data.minutesToClosure <= 30) colorClass = 'yos-bg-urgent';
+            else if (data.minutesToClosure <= 60) colorClass = 'yos-bg-warning';
+            else if (data.isDifferentDay) colorClass = 'yos-bg-nextday';
+
+            const isReverse = container.classList.contains('reverse_trailer_unit') || bayInt >= 700 && bayInt <= 799;
+            const positionClass = (bayInt >= 800 && bayInt <= 899) ? 'tnt-yos-above' : (isReverse ? 'tnt-yos-below' : (bayInt >= 400 ? 'tnt-yos-below' : 'tnt-yos-above'));
+            container.querySelectorAll('.tnt-yos-close, .yos-door-badge').forEach(node => node.remove());
+            const badge = document.createElement('div');
+            badge.id = `tnt-yos-badge-${bayNum}`;
+            badge.className = `tnt-yos-close ${positionClass} ${colorClass}`;
+            badge.innerHTML = `<span class="tnt-yos-time">${data.closureTimeStr}</span>`;
+            badge.title = `Baia ${bayNum} | Dest: ${data.dest || '-'} | Partenza: ${data.oraPartenza} | Chiusura: ${data.closureTimeStr} (-${data.closureOffset}m)`;
+            container.appendChild(badge);
         });
     }
 
     // --- LOGICA MODALE PER ESPORTAZIONE DATI ---
     let activeZone = '400';
+    const ZONES = ['400', '300', '700', '800'];
 
     function groupZoneItems(itemList, zone) {
         const filtered = itemList.filter(d => d.zone === zone);
+        const byClose = (a, b) => a.minutesToClosure - b.minutesToClosure;
         if (zone === '400') {
-            const bassa = filtered.filter(d => d.bayNum >= 401 && d.bayNum <= 429).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
-            const alta = filtered.filter(d => d.bayNum >= 430 && d.bayNum <= 456).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
+            const bassa = filtered.filter(d => d.bayNum >= 401 && d.bayNum <= 429).sort(byClose);
+            const alta = filtered.filter(d => d.bayNum >= 430 && d.bayNum <= 456).sort(byClose);
             return [{ title: '📍 ZONA 400 BASSA (BAIE 401 - 429)', items: bassa }, { title: '📍 ZONA 400 ALTA (BAIE 430 - 456)', items: alta }];
         } else if (zone === '300') {
-            const bassa = filtered.filter(d => d.bayNum >= 301 && d.bayNum <= 327).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
-            const alta = filtered.filter(d => d.bayNum >= 328 && d.bayNum <= 355).sort((a, b) => a.minutesToClosure - b.minutesToClosure);
+            const bassa = filtered.filter(d => d.bayNum >= 301 && d.bayNum <= 327).sort(byClose);
+            const alta = filtered.filter(d => d.bayNum >= 328 && d.bayNum <= 355).sort(byClose);
             return [{ title: '📍 ZONA 300 BASSA (BAIE 301 - 327)', items: bassa }, { title: '📍 ZONA 300 ALTA (BAIE 328 - 355)', items: alta }];
+        } else if (zone === '700') {
+            const sinistra = filtered.filter(d => d.bayNum >= 701 && d.bayNum <= 718).sort(byClose);
+            const destra = filtered.filter(d => d.bayNum >= 733 && d.bayNum <= 746).sort(byClose);
+            const altre = filtered.filter(d => !((d.bayNum >= 701 && d.bayNum <= 718) || (d.bayNum >= 733 && d.bayNum <= 746))).sort(byClose);
+            const groups = [
+                { title: '📍 ZONA 700 SINISTRA (BAIE 701 - 718)', items: sinistra },
+                { title: '📍 ZONA 700 DESTRA (BAIE 733 - 746) — scarico 719-732 escluso', items: destra }
+            ];
+            if (altre.length) groups.push({ title: '📍 ZONA 700 ALTRE', items: altre });
+            return groups;
+        } else if (zone === '800') {
+            const sinistra = filtered.filter(d => d.bayNum >= 819 && d.bayNum <= 846).sort(byClose);
+            const destra = filtered.filter(d => d.bayNum >= 800 && d.bayNum <= 814).sort(byClose);
+            const altre = filtered.filter(d => !((d.bayNum >= 819 && d.bayNum <= 846) || (d.bayNum >= 800 && d.bayNum <= 814))).sort(byClose);
+            const groups = [
+                { title: '📍 ZONA 800 SINISTRA (BAIE 819 - 846)', items: sinistra },
+                { title: '📍 ZONA 800 DESTRA (BAIE 800 - 814) — scarico 815-818 escluso', items: destra }
+            ];
+            if (altre.length) groups.push({ title: '📍 ZONA 800 ALTRE', items: altre });
+            return groups;
         }
         return [];
     }
@@ -425,13 +458,12 @@
             alert("Nessun dato! Assicurati di aprire il menu 'Outbound View' almeno una volta per dare inizio al caricamento.");
             return;
         }
-
         const existing = document.getElementById('tnt-yos-modal');
         if (existing) existing.remove();
-
         const modal = document.createElement('div');
         modal.id = 'tnt-yos-modal';
         modal.className = 'yos-modal-overlay';
+        const tabButtons = ZONES.map(z => `<button class="yos-tab-btn ${activeZone === z ? 'active' : ''}" id="tab-${z}">Zona ${z}</button>`).join('');
         modal.innerHTML = `
             <div class="yos-modal-content">
                 <div class="yos-modal-header">
@@ -439,8 +471,7 @@
                     <button class="yos-btn-close" id="yos-close-x">✕</button>
                 </div>
                 <div class="yos-modal-tabs">
-                    <button class="yos-tab-btn ${activeZone === '400' ? 'active' : ''}" id="tab-400">Zona 400</button>
-                    <button class="yos-tab-btn ${activeZone === '300' ? 'active' : ''}" id="tab-300">Zona 300</button>
+                    ${tabButtons}
                     <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
                         <button class="yos-btn-img" id="top-img-btn">📸 Scarica Immagine</button>
                         <button class="yos-btn-csv" id="top-csv-btn">📥 Scarica CSV</button>
@@ -464,24 +495,23 @@
                 </div>
             </div>
         `;
-
         document.body.appendChild(modal);
-
         document.getElementById('yos-close-x').onclick = () => modal.remove();
         document.getElementById('yos-close-btn').onclick = () => modal.remove();
-        document.getElementById('tab-400').onclick = () => { activeZone = '400'; updateTabStyles(); renderTableRows(); };
-        document.getElementById('tab-300').onclick = () => { activeZone = '300'; updateTabStyles(); renderTableRows(); };
+        ZONES.forEach(z => {
+            document.getElementById(`tab-${z}`).onclick = () => { activeZone = z; updateTabStyles(); renderTableRows(); };
+        });
         document.getElementById('yos-select-all').onchange = (e) => { document.querySelectorAll('.yos-row-check').forEach(cb => cb.checked = e.target.checked); };
-
         document.getElementById('top-csv-btn').onclick = downloadCSV; document.getElementById('bot-csv-btn').onclick = downloadCSV;
         document.getElementById('top-img-btn').onclick = generateImage; document.getElementById('bot-img-btn').onclick = generateImage;
-
         renderTableRows();
     }
 
     function updateTabStyles() {
-        document.getElementById('tab-400').className = `yos-tab-btn ${activeZone === '400' ? 'active' : ''}`;
-        document.getElementById('tab-300').className = `yos-tab-btn ${activeZone === '300' ? 'active' : ''}`;
+        ZONES.forEach(z => {
+            const el = document.getElementById(`tab-${z}`);
+            if (el) el.className = `yos-tab-btn ${activeZone === z ? 'active' : ''}`;
+        });
     }
 
     function renderTableRows() {
@@ -489,14 +519,12 @@
         tbody.innerHTML = '';
         const groups = groupZoneItems(globalOutboundCache, activeZone);
         let totalItems = 0; let allChecked = true;
-
         groups.forEach(group => {
             if (group.items.length > 0) {
                 totalItems += group.items.length;
                 const sectionTr = document.createElement('tr');
                 sectionTr.innerHTML = `<td colspan="8" class="yos-section-divider">${group.title}</td>`;
                 tbody.appendChild(sectionTr);
-
                 group.items.forEach(row => {
                     const tr = document.createElement('tr');
                     if (row.isManaged) tr.className = 'yos-row-managed';
@@ -504,16 +532,13 @@
                     else if (row.isUrgent) tr.className = 'yos-row-urgent';
                     else if (row.isImminent) tr.className = 'yos-row-imminent';
                     else if (row.isWithin180Min) tr.className = 'yos-row-waiting-window';
-
                     const isChecked = row.isWithin180Min || row.isManaged ? 'checked' : '';
                     if (!isChecked) allChecked = false;
-
                     let statusDisplay = 'In attesa';
                     if (row.isManaged) statusDisplay = '<span style="color:#28a745; font-weight:bold;">CHIUSO</span>';
                     else if (row.isExpired) statusDisplay = '<span style="color:#f44336; font-weight:bold;">🚨 SCADUTO</span>';
                     else if (row.isUrgent) statusDisplay = '<span style="color:#ffda6a; font-weight:bold;">⚠️ DA CHIUDERE</span>';
                     else if (row.isImminent) statusDisplay = '<span style="color:#ff9800; font-weight:bold;">🟠 CHIUSURA IMMINENTE</span>';
-
                     tr.innerHTML = `
                         <td><input type="checkbox" class="yos-row-check" data-bay="${row.bay}" data-time="${row.oraPartenza}" ${isChecked}></td>
                         <td><strong>${row.bay}</strong></td>
@@ -528,7 +553,6 @@
                 });
             }
         });
-
         if (totalItems === 0) { tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 20px; color: #888;">Nessun mezzo in memoria.</td></tr>`; }
         const selectAllCb = document.getElementById('yos-select-all');
         if (selectAllCb) selectAllCb.checked = allChecked;
@@ -570,7 +594,6 @@
         groups.forEach(g => { if (g.items.length > 0) { totalSubHeaders++; totalRows += g.items.length; } });
         const height = mainHeaderHeight + (totalSubHeaders * subHeaderHeight) + (totalRows * rowHeight) + 20;
         canvas.width = width * 2; canvas.height = height * 2; ctx.scale(2, 2);
-
         ctx.fillStyle = '#1e1e1e'; ctx.fillRect(0, 0, width, height);
         ctx.fillStyle = '#007bff'; ctx.fillRect(0, 0, width, 45);
         ctx.fillStyle = '#ffffff'; ctx.font = 'bold 16px Roboto, sans-serif';
@@ -581,7 +604,6 @@
         ctx.fillStyle = '#aaaaaa'; ctx.font = 'bold 12px Roboto, sans-serif';
         ctx.fillText('BAIA', 20, 68); ctx.fillText('GIORNO', 90, 68); ctx.fillText('PARTENZA', 180, 68);
         ctx.fillText('DESTINAZIONE', 290, 68); ctx.fillText('ORARIO CHIUSURA', 420, 68); ctx.fillText('TEMPO RIMANENTE', 580, 68); ctx.fillText('STATO', 780, 68);
-
         let y = 85;
         groups.forEach(g => {
             if (g.items.length > 0) {
@@ -595,18 +617,15 @@
                     else if (r.isUrgent) { ctx.fillStyle = 'rgba(255, 193, 7, 0.18)'; ctx.fillRect(0, y, width, rowHeight); }
                     else if (r.isImminent) { ctx.fillStyle = 'rgba(255, 152, 0, 0.22)'; ctx.fillRect(0, y, width, rowHeight); }
                     else { ctx.fillStyle = i % 2 === 0 ? '#252627' : '#1e1e1e'; ctx.fillRect(0, y, width, rowHeight); }
-
                     ctx.fillStyle = '#333333'; ctx.fillRect(0, y + rowHeight - 1, width, 1);
                     ctx.font = 'bold 13px Roboto, sans-serif';
                     ctx.fillStyle = r.isManaged ? '#85e39d' : (r.isExpired ? '#ef9a9a' : (r.isUrgent ? '#ffda6a' : (r.isImminent ? '#ffb74d' : '#ffffff')));
                     ctx.fillText(r.bay, 20, y + 24);
-
                     ctx.font = '12px Roboto, sans-serif'; ctx.fillStyle = '#e3e3e3';
                     ctx.fillText(r.giorno, 90, y + 24); ctx.fillText(r.oraPartenza, 180, y + 24);
                     ctx.font = 'bold 12px Roboto, sans-serif'; ctx.fillText(r.dest, 290, y + 24);
                     ctx.fillText(`${r.closureTimeStr} (-${r.closureOffset}m)`, 420, y + 24);
                     ctx.fillText(formatRemainingTime(r.minutesToClosure, r.isManaged), 580, y + 24);
-
                     if (r.isManaged) { ctx.fillStyle = '#28a745'; ctx.fillText('CHIUSO', 780, y + 24); }
                     else if (r.isExpired) { ctx.fillStyle = '#f44336'; ctx.fillText('🚨 SCADUTO', 780, y + 24); }
                     else if (r.isUrgent) { ctx.fillStyle = '#ffda6a'; ctx.fillText('⚠️ DA CHIUDERE', 780, y + 24); }
@@ -616,7 +635,6 @@
                 });
             }
         });
-
         const link = document.createElement('a'); link.download = `Outbound_Zona_${activeZone}_${String(new Date().getHours()).padStart(2, '0')}-${String(new Date().getMinutes()).padStart(2, '0')}.png`;
         link.href = canvas.toDataURL('image/png'); link.click();
     }
